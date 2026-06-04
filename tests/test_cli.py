@@ -68,6 +68,41 @@ class TestMonoSubcommandDispatch:
             main()
 
 
+class TestAutoMap:
+    def test_no_args_with_services_runs_map(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "svc-a").mkdir()
+        (tmp_path / "svc-a" / "pyproject.toml").touch()
+        (tmp_path / "svc-b").mkdir()
+        (tmp_path / "svc-b" / "package.json").touch()
+        monkeypatch.setattr(sys, "argv", ["codex-graph"])
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+
+        called_with = {}
+
+        def fake_run_map(root, mono_cfg, backend_override=None, dry_run=False):
+            called_with["root"] = root
+            return 0
+
+        monkeypatch.setattr("codex_graph.multirepo.run_map", fake_run_map)
+        with pytest.raises(SystemExit) as exc:
+            from codex_graph.cli import main
+            main()
+        assert exc.value.code == 0
+        assert str(tmp_path) == called_with["root"]
+
+    def test_no_args_without_services_shows_help(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(sys, "argv", ["codex-graph"])
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+        with pytest.raises(SystemExit) as exc:
+            from codex_graph.cli import main
+            main()
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "codex-graph" in out
+
+
 class TestExistingPromptPathUnaffected:
     def test_list_files_uses_existing_graph(self, tmp_path, monkeypatch, capsys):
         graph_dir = tmp_path / "graphify-out"

@@ -45,6 +45,23 @@ def _run_mono_command(cmd: str, argv: list[str]) -> None:
     sys.exit(rc)
 
 
+def _auto_map_if_needed(cfg_path: str | None) -> None:
+    from codex_graph import multirepo
+    from codex_graph.config import load_config
+
+    cfg = load_config(cfg_path)
+    root = os.path.abspath(".")
+    services = multirepo.detect_services(root, cfg.mono.marker_files)
+    if not services:
+        return
+
+    names = ", ".join(s.name for s in services)
+    print(f"[codex-graph] Detected {len(services)} service(s): {names}")
+    print(f"[codex-graph] Running 'codex-graph map' to build knowledge graphs ...", file=sys.stderr)
+    rc = multirepo.run_map(root=root, mono_cfg=cfg.mono)
+    sys.exit(rc)
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("map", "watch"):
         _run_mono_command(sys.argv[1], sys.argv[2:])
@@ -52,7 +69,15 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         prog="codex-graph",
-        description="Codex CLI with knowledge-graph context injection",
+        description=(
+            "Codex CLI with knowledge-graph context injection for monorepos.\n\n"
+            "First-run (after pip install): just run 'codex-graph' or 'codex-graph map'\n"
+            "in your monorepo root — services are auto-detected and graphs are built.\n\n"
+            "Subcommands:\n"
+            "  map    Build per-service graphs and cross-service bridge notes\n"
+            "  watch  Keep graphs and bridge notes up-to-date as files change"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("prompt", nargs="?", help="Natural language task prompt")
     parser.add_argument("--config", default=None, metavar="PATH", help="Path to config.toml")
@@ -67,6 +92,7 @@ def main() -> None:
     prompt = args.prompt
     if not prompt:
         if sys.stdin.isatty():
+            _auto_map_if_needed(args.config)
             parser.print_help()
             sys.exit(1)
         prompt = sys.stdin.read().strip()
