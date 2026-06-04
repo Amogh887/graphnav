@@ -408,18 +408,30 @@ def build_playbook_text(root: str, services: list[ServiceInfo]) -> str:
     lines = [
         "# Coding with the codebase knowledge graph",
         "",
-        "This repo has a graphify knowledge graph. Use it to code with minimal context.",
+        "This repo has a graphify knowledge graph. Use it as your **first resort** — "
+        "never use `find`, `ls`, or `cat` to explore repo structure or understand unfamiliar code.",
         "",
-        "**First, judge scope:**",
-        "- Small/local edit (a file already open, a rename, a one-line fix, formatting)? "
-        "Just make it — ignore the rest of this section.",
-        "- Spans multiple files/services, or touches unfamiliar code? Then:",
+        "**Step 0 — always read the monorepo map first** for any task that isn't a "
+        "single-file, single-line change:",
+        "```",
+        "graphify-out/MONOREPO_MAP.md",
+        "```",
+        "",
+        "**Then judge scope:**",
+        "- Single-file, single-line edit (rename, formatting, one-liner)? "
+        "Just make it — no further graphify steps needed.",
+        "- Everything else — including code changes, explanations, architecture questions, "
+        '"how does X work", overviews, or anything touching unfamiliar files:',
         '  1. Run `codex-graph context "<task>"` — prints the minimal files, their symbol '
         "`file:line` locations, and any cross-service impact.",
         "  2. Open ONLY those files; read the given `file:line` regions, not whole files.",
         '  3. Before changing a symbol flagged "Cross-service impact", run '
         '`graphify affected "<symbol>"`.',
-        "  4. Implement, then run the project's tests.",
+        "  4. Implement (or answer), then run the project's tests if code changed.",
+        "",
+        "**Never** use `find`/`ls`/`cat` to survey the repo. If graphify doesn't give "
+        "enough context, read `<service>/graphify-out/SYMBOLS.md` or "
+        "`<service>/graphify-out/BRIDGES.md` next — not a raw directory listing.",
         "",
         f"Services: {svc_names}",
         "On-demand maps (open only when needed): `graphify-out/MONOREPO_MAP.md` · "

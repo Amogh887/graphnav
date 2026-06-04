@@ -889,7 +889,19 @@ class TestBuildPlaybookText:
 
     def test_is_compact(self, tmp_path):
         text = build_playbook_text(str(tmp_path), [])
-        assert len(text.splitlines()) <= 20
+        assert len(text.splitlines()) <= 35
+
+    def test_bans_find_ls_cat(self, tmp_path):
+        text = build_playbook_text(str(tmp_path), [])
+        assert "find" in text and "ls" in text and "cat" in text
+
+    def test_has_step_zero(self, tmp_path):
+        text = build_playbook_text(str(tmp_path), [])
+        assert "Step 0" in text and "MONOREPO_MAP.md" in text
+
+    def test_covers_explanations_and_questions(self, tmp_path):
+        text = build_playbook_text(str(tmp_path), [])
+        assert "explanation" in text.lower() or "how does" in text.lower()
 
 
 # ── write_symbols_md ─────────────────────────────────────────────────────────
