@@ -40,6 +40,7 @@ class MonoConfig:
     marker_files: list[str] = field(default_factory=lambda: [
         "package.json", "pyproject.toml", "go.mod", "Cargo.toml",
         "pom.xml", "build.gradle", "setup.py", "setup.cfg",
+        "requirements.txt", "Gemfile", "composer.json", "tsconfig.json",
     ])
     graphify_backend: str = "claude"
     watch_poll_interval: float = 3.0

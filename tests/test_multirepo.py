@@ -14,14 +14,16 @@ from codex_graph.multirepo import (
     BridgeRow,
     ServiceInfo,
     _find_env_file,
+    _has_source_files,
     _load_env_file,
     _service_of,
     _stream_proc,
     analyze_bridges,
+    build_overarching_graph,
     detect_services,
+    partition_graph,
     run_extract,
     run_map,
-    run_merge,
     run_watch,
     write_bridges_md,
     write_copilot_instructions,
@@ -108,6 +110,27 @@ class TestLoadEnvFile:
         monkeypatch.chdir(child)
         result = _load_env_file(str(child))
         assert result.get("FROM_PARENT") == "yes"
+
+    def test_finds_env_in_immediate_subdir(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        svc = tmp_path / "backend"
+        svc.mkdir()
+        (svc / ".env").write_text("ANTHROPIC_API_KEY=sk-from-subdir\n")
+        result = _load_env_file(str(tmp_path))
+        assert result.get("ANTHROPIC_API_KEY") == "sk-from-subdir"
+
+    def test_root_env_takes_precedence_over_subdir(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".env").write_text("KEY=root\n")
+        svc = tmp_path / "svc"
+        svc.mkdir()
+        (svc / ".env").write_text("KEY=subdir\n")
+        assert _load_env_file(str(tmp_path))["KEY"] == "root"
+
+    def test_export_prefix_stripped(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".env").write_text("export ANTHROPIC_API_KEY=sk-exported\n")
+        assert _load_env_file(str(tmp_path))["ANTHROPIC_API_KEY"] == "sk-exported"
 
 
 # ── _service_of ──────────────────────────────────────────────────────────────
@@ -206,6 +229,86 @@ class TestDetectServices:
         result = detect_services(str(tmp_path), markers)
         assert len(result) == len(markers)
 
+    def test_source_only_dir_detected_without_marker(self, tmp_path):
+        d = tmp_path / "api"
+        d.mkdir()
+        (d / "index.py").write_text("x = 1\n")
+        result = detect_services(str(tmp_path), ["package.json"])
+        assert [s.name for s in result] == ["api"]
+
+    def test_nested_source_detected(self, tmp_path):
+        d = tmp_path / "frontend"
+        (d / "src").mkdir(parents=True)
+        (d / "src" / "App.tsx").write_text("export default 1\n")
+        result = detect_services(str(tmp_path), [])
+        assert [s.name for s in result] == ["frontend"]
+
+    def test_dir_with_only_data_files_not_detected(self, tmp_path):
+        d = tmp_path / "data"
+        d.mkdir()
+        (d / "results.json").write_text("{}")
+        (d / "notes.md").write_text("# notes")
+        assert detect_services(str(tmp_path), ["package.json"]) == []
+
+    def test_node_modules_skipped(self, tmp_path):
+        nm = tmp_path / "node_modules"
+        (nm / "pkg").mkdir(parents=True)
+        (nm / "pkg" / "index.js").write_text("module.exports = 1\n")
+        assert detect_services(str(tmp_path), []) == []
+
+    def test_graphify_out_skipped(self, tmp_path):
+        d = tmp_path / "graphify-out"
+        d.mkdir()
+        (d / "graph.json").write_text("{}")
+        assert detect_services(str(tmp_path), []) == []
+
+    def test_dotdir_skipped(self, tmp_path):
+        d = tmp_path / ".git"
+        d.mkdir()
+        (d / "hook.py").write_text("x = 1\n")
+        assert detect_services(str(tmp_path), []) == []
+
+    def test_source_extension_inside_node_modules_of_service_still_detects_service(self, tmp_path):
+        d = tmp_path / "frontend"
+        d.mkdir()
+        (d / "package.json").write_text("{}")
+        nm = d / "node_modules" / "dep"
+        nm.mkdir(parents=True)
+        (nm / "x.js").write_text("1\n")
+        result = detect_services(str(tmp_path), ["package.json"])
+        assert [s.name for s in result] == ["frontend"]
+
+
+# ── _has_source_files ────────────────────────────────────────────────────────
+
+class TestHasSourceFiles:
+    def test_detects_python(self, tmp_path):
+        (tmp_path / "a.py").write_text("x = 1\n")
+        assert _has_source_files(str(tmp_path)) is True
+
+    def test_detects_nested(self, tmp_path):
+        sub = tmp_path / "src" / "deep"
+        sub.mkdir(parents=True)
+        (sub / "a.ts").write_text("1\n")
+        assert _has_source_files(str(tmp_path)) is True
+
+    def test_ignores_data_files(self, tmp_path):
+        (tmp_path / "a.json").write_text("{}")
+        (tmp_path / "b.csv").write_text("1,2\n")
+        assert _has_source_files(str(tmp_path)) is False
+
+    def test_prunes_skip_dirs(self, tmp_path):
+        nm = tmp_path / "node_modules"
+        nm.mkdir()
+        (nm / "x.js").write_text("1\n")
+        assert _has_source_files(str(tmp_path)) is False
+
+    def test_respects_max_depth(self, tmp_path):
+        deep = tmp_path / "a" / "b" / "c" / "d" / "e"
+        deep.mkdir(parents=True)
+        (deep / "x.py").write_text("1\n")
+        assert _has_source_files(str(tmp_path), max_depth=2) is False
+
 
 # ── _stream_proc ─────────────────────────────────────────────────────────────
 
@@ -283,42 +386,127 @@ class TestRunExtract:
         assert rc == 1
 
 
-# ── run_merge ────────────────────────────────────────────────────────────────
+# ── build_overarching_graph ──────────────────────────────────────────────────
 
-class TestRunMerge:
-    def test_calls_graphify_merge_with_all_graphs(self, tmp_path):
-        services = [
-            ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a" / "graphify-out" / "graph.json")),
-            ServiceInfo("svc-b", str(tmp_path / "svc-b"), str(tmp_path / "svc-b" / "graphify-out" / "graph.json")),
-        ]
-        merged_out = str(tmp_path / "graphify-out" / "merged-graph.json")
+class TestBuildOverarchingGraph:
+    def test_extracts_root_path(self, tmp_path):
         mock_proc = make_mock_proc(0)
         with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            run_merge(services, "/graphify", merged_out)
+            build_overarching_graph(str(tmp_path), "/graphify", "claude")
         args = mock_popen.call_args[0][0]
-        assert "merge-graphs" in args
-        assert services[0].graph_path in args
-        assert services[1].graph_path in args
-        assert "--out" in args
-        assert merged_out in args
-
-    def test_creates_output_directory(self, tmp_path):
-        services = [
-            ServiceInfo("a", str(tmp_path / "a"), str(tmp_path / "a" / "g.json")),
-        ]
-        merged_out = str(tmp_path / "deep" / "nested" / "merged.json")
-        mock_proc = make_mock_proc(0)
-        with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc):
-            run_merge(services, "/graphify", merged_out)
-        assert os.path.isdir(str(tmp_path / "deep" / "nested"))
+        assert args[:2] == ["/graphify", "extract"]
+        assert str(tmp_path) in args
+        idx = args.index("--out")
+        assert args[idx + 1] == str(tmp_path)
 
     def test_returns_exit_code(self, tmp_path):
-        services = [ServiceInfo("a", str(tmp_path), str(tmp_path / "g.json"))]
-        mock_proc = make_mock_proc(returncode=2)
-        merged_out = str(tmp_path / "graphify-out" / "merged.json")
+        mock_proc = make_mock_proc(returncode=3)
         with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc):
-            rc = run_merge(services, "/graphify", merged_out)
-        assert rc == 2
+            rc = build_overarching_graph(str(tmp_path), "/graphify", "claude")
+        assert rc == 3
+
+    def test_passes_env(self, tmp_path):
+        mock_proc = make_mock_proc(0)
+        env = {"ANTHROPIC_API_KEY": "sk-test"}
+        with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            build_overarching_graph(str(tmp_path), "/graphify", "claude", env=env)
+        assert mock_popen.call_args.kwargs["env"] == env
+
+
+# ── partition_graph ──────────────────────────────────────────────────────────
+
+class TestPartitionGraph:
+    def _overarching(self, tmp_path):
+        graph = {
+            "directed": True,
+            "nodes": [
+                {"id": "a1", "label": "handler", "source_file": "api/index.py"},
+                {"id": "b1", "label": "coach", "source_file": "backend/coach.py"},
+                {"id": "b2", "label": "main", "source_file": "backend/main.py"},
+                {"id": "e1", "label": "run", "source_file": "eval/run.py"},
+                {"id": "r1", "label": "root_helper", "source_file": "setup.py"},
+            ],
+            "links": [
+                {"source": "b1", "target": "b2", "relation": "calls", "source_file": "backend/coach.py"},
+                {"source": "e1", "target": "b1", "relation": "calls", "source_file": "eval/run.py"},
+                {"source": "a1", "target": "r1", "relation": "imports", "source_file": "api/index.py"},
+            ],
+        }
+        p = tmp_path / "graphify-out" / "graph.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(graph))
+        return str(p)
+
+    def _services(self, tmp_path):
+        return [
+            ServiceInfo(n, str(tmp_path / n), str(tmp_path / n / "graphify-out" / "graph.json"))
+            for n in ("api", "backend", "eval")
+        ]
+
+    def test_writes_per_service_graphs(self, tmp_path):
+        overarching = self._overarching(tmp_path)
+        services = self._services(tmp_path)
+        counts = partition_graph(overarching, services)
+        assert counts == {"api": 1, "backend": 2, "eval": 1}
+        for svc in services:
+            assert os.path.exists(svc.graph_path)
+
+    def test_service_graph_contains_only_its_nodes(self, tmp_path):
+        overarching = self._overarching(tmp_path)
+        services = self._services(tmp_path)
+        partition_graph(overarching, services)
+        backend = next(s for s in services if s.name == "backend")
+        g = json.loads(open(backend.graph_path).read())
+        labels = {n["label"] for n in g["nodes"]}
+        assert labels == {"coach", "main"}
+
+    def test_intra_service_links_kept(self, tmp_path):
+        overarching = self._overarching(tmp_path)
+        services = self._services(tmp_path)
+        partition_graph(overarching, services)
+        backend = next(s for s in services if s.name == "backend")
+        g = json.loads(open(backend.graph_path).read())
+        assert len(g["links"]) == 1
+        assert g["links"][0]["relation"] == "calls"
+
+    def test_cross_service_links_excluded_from_service_graph(self, tmp_path):
+        overarching = self._overarching(tmp_path)
+        services = self._services(tmp_path)
+        partition_graph(overarching, services)
+        eval_svc = next(s for s in services if s.name == "eval")
+        g = json.loads(open(eval_svc.graph_path).read())
+        assert g["links"] == []
+
+    def test_root_level_nodes_excluded(self, tmp_path):
+        overarching = self._overarching(tmp_path)
+        services = self._services(tmp_path)
+        counts = partition_graph(overarching, services)
+        assert sum(counts.values()) == 4
+
+    def test_preserves_top_level_metadata(self, tmp_path):
+        overarching = self._overarching(tmp_path)
+        services = self._services(tmp_path)
+        partition_graph(overarching, services)
+        g = json.loads(open(services[0].graph_path).read())
+        assert g.get("directed") is True
+
+    def test_handles_edges_key(self, tmp_path):
+        graph = {
+            "nodes": [
+                {"id": "b1", "label": "coach", "source_file": "backend/coach.py"},
+                {"id": "b2", "label": "main", "source_file": "backend/main.py"},
+            ],
+            "edges": [
+                {"source": "b1", "target": "b2", "relation": "calls", "source_file": "backend/coach.py"},
+            ],
+        }
+        p = tmp_path / "graphify-out" / "graph.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(graph))
+        services = [ServiceInfo("backend", str(tmp_path / "backend"), str(tmp_path / "backend" / "graphify-out" / "graph.json"))]
+        partition_graph(str(p), services)
+        g = json.loads(open(services[0].graph_path).read())
+        assert len(g["links"]) == 1
 
 
 # ── analyze_bridges ──────────────────────────────────────────────────────────
@@ -615,7 +803,31 @@ class TestWriteCopilotInstructions:
         assert "## How to Use" in Path(path).read_text()
 
 
+
 # ── run_map ──────────────────────────────────────────────────────────────────
+
+def _write_overarching(root, cross=True, single=False):
+    if single:
+        nodes = [
+            {"id": "a1", "label": "handler", "source_file": "svc-a/client.py"},
+            {"id": "a2", "label": "helper", "source_file": "svc-a/util.py"},
+        ]
+        links = [{"source": "a1", "target": "a2", "relation": "calls", "source_file": "svc-a/client.py"}]
+    else:
+        nodes = [
+            {"id": "a1", "label": "handler", "source_file": "svc-a/client.py"},
+            {"id": "b1", "label": "server", "source_file": "svc-b/server.py"},
+            {"id": "r1", "label": "root_thing", "source_file": "setup.py"},
+        ]
+        links = []
+        if cross:
+            links.append({"source": "a1", "target": "b1", "relation": "calls", "source_file": "svc-a/client.py"})
+    p = os.path.join(root, "graphify-out", "graph.json")
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w") as f:
+        json.dump({"directed": True, "nodes": nodes, "links": links}, f)
+    return p
+
 
 class TestRunMap:
     def test_graphify_not_found_returns_1(self, tmp_path, monkeypatch):
@@ -635,106 +847,107 @@ class TestRunMap:
         assert "svc-b" in out
         assert "[dry-run]" in out
 
-    def test_dry_run_does_not_call_extract(self, two_svc_root, monkeypatch):
+    def test_dry_run_does_not_build(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        extract_called = []
-        monkeypatch.setattr("codex_graph.multirepo.run_extract", lambda *a, **kw: extract_called.append(True) or 0)
+        built = []
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph",
+                            lambda *a, **kw: built.append(True) or 0)
         run_map(str(two_svc_root), MonoConfig(), dry_run=True)
-        assert extract_called == []
+        assert built == []
 
-    def test_backend_override_passed_to_extract(self, two_svc_root, monkeypatch):
+    def test_overarching_failure_returns_1(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        backends_used = []
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", lambda *a, **kw: 1)
+        assert run_map(str(two_svc_root), MonoConfig()) == 1
 
-        def fake_extract(svc, path, backend, timeout=600, env=None):
-            backends_used.append(backend)
-            Path(svc.graph_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(svc.graph_path).write_text("{}")
-            return 0
-
-        monkeypatch.setattr("codex_graph.multirepo.run_extract", fake_extract)
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write", lambda *a, **kw: None)
-        run_map(str(two_svc_root), MonoConfig(), backend_override="openai")
-        assert all(b == "openai" for b in backends_used)
-
-    def test_config_backend_used_when_no_override(self, two_svc_root, monkeypatch):
+    def test_overarching_missing_file_returns_1(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        backends_used = []
-
-        def fake_extract(svc, path, backend, timeout=600, env=None):
-            backends_used.append(backend)
-            Path(svc.graph_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(svc.graph_path).write_text("{}")
-            return 0
-
-        monkeypatch.setattr("codex_graph.multirepo.run_extract", fake_extract)
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write", lambda *a, **kw: None)
-        cfg = MonoConfig(graphify_backend="gemini")
-        run_map(str(two_svc_root), cfg)
-        assert all(b == "gemini" for b in backends_used)
-
-    def test_failed_extract_skipped_continues(self, two_svc_root, monkeypatch, capsys):
-        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        call_count = [0]
-
-        def fake_extract(svc, path, backend, timeout=600, env=None):
-            call_count[0] += 1
-            if svc.name == "svc-a":
-                return 1
-            Path(svc.graph_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(svc.graph_path).write_text("{}")
-            return 0
-
-        monkeypatch.setattr("codex_graph.multirepo.run_extract", fake_extract)
-        run_map(str(two_svc_root), MonoConfig())
-        assert call_count[0] == 2
-        assert "WARNING" in capsys.readouterr().err
-
-    def test_only_one_success_skips_merge(self, two_svc_root, monkeypatch, capsys):
-        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-
-        def fake_extract(svc, path, backend, timeout=600, env=None):
-            if svc.name == "svc-a":
-                Path(svc.graph_path).parent.mkdir(parents=True, exist_ok=True)
-                Path(svc.graph_path).write_text("{}")
-                return 0
-            return 1
-
-        monkeypatch.setattr("codex_graph.multirepo.run_extract", fake_extract)
-        assert run_map(str(two_svc_root), MonoConfig()) == 0
-        out = capsys.readouterr().out
-        assert "only 1 service" in out
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", lambda *a, **kw: 0)
+        assert run_map(str(two_svc_root), MonoConfig()) == 1
 
     def test_full_success_returns_0(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
 
-        def fake_extract(svc, path, backend, timeout=600, env=None):
-            Path(svc.graph_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(svc.graph_path).write_text("{}")
+        def fake_build(root, graphify_path, backend, timeout=1200, env=None):
+            _write_overarching(root)
             return 0
 
-        monkeypatch.setattr("codex_graph.multirepo.run_extract", fake_extract)
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write", lambda *a, **kw: None)
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", fake_build)
         assert run_map(str(two_svc_root), MonoConfig()) == 0
 
-    def test_full_success_summary_in_stdout(self, two_svc_root, monkeypatch, capsys):
+    def test_writes_per_service_graphs(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph",
+                            lambda root, *a, **kw: _write_overarching(root) and 0 or 0)
+        run_map(str(two_svc_root), MonoConfig())
+        assert (two_svc_root / "svc-a" / "graphify-out" / "graph.json").exists()
+        assert (two_svc_root / "svc-b" / "graphify-out" / "graph.json").exists()
 
-        def fake_extract(svc, path, backend, timeout=600, env=None):
-            Path(svc.graph_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(svc.graph_path).write_text("{}")
-            return 0
+    def test_writes_bridges_map_and_copilot(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph",
+                            lambda root, *a, **kw: _write_overarching(root) and 0 or 0)
+        run_map(str(two_svc_root), MonoConfig())
+        assert (two_svc_root / "svc-a" / "graphify-out" / "BRIDGES.md").exists()
+        assert (two_svc_root / "graphify-out" / "MONOREPO_MAP.md").exists()
+        assert (two_svc_root / ".github" / "copilot-instructions.md").exists()
 
-        monkeypatch.setattr("codex_graph.multirepo.run_extract", fake_extract)
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write", lambda *a, **kw: None)
+    def test_cross_service_bridge_detected_and_reported(self, two_svc_root, monkeypatch, capsys):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph",
+                            lambda root, *a, **kw: _write_overarching(root, cross=True) and 0 or 0)
         run_map(str(two_svc_root), MonoConfig())
         out = capsys.readouterr().out
-        assert "Done" in out
-        assert "2/2" in out
+        assert "1 cross-service connection" in out
+        bridges_md = (two_svc_root / "svc-a" / "graphify-out" / "BRIDGES.md").read_text()
+        assert "svc-b" in bridges_md
+        assert "server" in bridges_md
 
-    def test_root_path_resolved_to_absolute(self, two_svc_root, monkeypatch):
+    def test_no_cross_service_when_no_links(self, two_svc_root, monkeypatch, capsys):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        monkeypatch.setattr("codex_graph.multirepo.run_extract", lambda *a, **kw: 0)
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph",
+                            lambda root, *a, **kw: _write_overarching(root, cross=False) and 0 or 0)
+        run_map(str(two_svc_root), MonoConfig())
+        out = capsys.readouterr().out
+        assert "0 cross-service connection" in out
+
+    def test_backend_override_passed(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        backends = []
+
+        def fake_build(root, graphify_path, backend, timeout=1200, env=None):
+            backends.append(backend)
+            _write_overarching(root)
+            return 0
+
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", fake_build)
+        run_map(str(two_svc_root), MonoConfig(), backend_override="openai")
+        assert backends == ["openai"]
+
+    def test_config_backend_used_when_no_override(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        backends = []
+
+        def fake_build(root, graphify_path, backend, timeout=1200, env=None):
+            backends.append(backend)
+            _write_overarching(root)
+            return 0
+
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", fake_build)
+        run_map(str(two_svc_root), MonoConfig(graphify_backend="gemini"))
+        assert backends == ["gemini"]
+
+    def test_single_service_returns_0(self, tmp_path, monkeypatch, capsys):
+        d = tmp_path / "svc-a"
+        d.mkdir()
+        (d / "pyproject.toml").touch()
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph",
+                            lambda root, *a, **kw: _write_overarching(root, single=True) and 0 or 0)
+        assert run_map(str(tmp_path), MonoConfig()) == 0
+
+    def test_root_path_resolved_to_absolute(self, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
         roots_seen = []
 
         def fake_detect(root, markers):
@@ -744,6 +957,20 @@ class TestRunMap:
         monkeypatch.setattr("codex_graph.multirepo.detect_services", fake_detect)
         run_map(".", MonoConfig())
         assert os.path.isabs(roots_seen[0])
+
+    def test_env_built_from_root(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        envs = []
+
+        def fake_build(root, graphify_path, backend, timeout=1200, env=None):
+            envs.append(env)
+            _write_overarching(root)
+            return 0
+
+        (two_svc_root / ".env").write_text("ANTHROPIC_KEY=sk-xyz\n")
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", fake_build)
+        run_map(str(two_svc_root), MonoConfig())
+        assert envs[0].get("ANTHROPIC_API_KEY") == "sk-xyz"
 
 
 # ── run_watch ────────────────────────────────────────────────────────────────
@@ -757,108 +984,96 @@ class TestRunWatch:
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
         assert run_watch(str(tmp_path), MonoConfig()) == 1
 
-    def test_keyboard_interrupt_returns_0(self, two_svc_root_with_graphs, monkeypatch):
+    def test_bootstrap_builds_when_overarching_missing(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write", lambda *a, **kw: None)
+        built = []
 
-        mock_proc = make_mock_proc(returncode=None)
-        mock_proc.poll.return_value = None
-        monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: mock_proc)
-
-        def first_sleep_raises(_):
-            raise KeyboardInterrupt
-
-        monkeypatch.setattr("codex_graph.multirepo.time.sleep", first_sleep_raises)
-        assert run_watch(str(two_svc_root_with_graphs), MonoConfig()) == 0
-
-    def test_keyboard_interrupt_terminates_watch_procs(self, two_svc_root_with_graphs, monkeypatch):
-        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write", lambda *a, **kw: None)
-
-        mock_proc = make_mock_proc(returncode=None)
-        mock_proc.poll.return_value = None
-        popen_calls = []
-
-        def capture_popen(*args, **kwargs):
-            popen_calls.append(True)
-            return mock_proc
-
-        monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", capture_popen)
-        monkeypatch.setattr("codex_graph.multirepo.time.sleep", lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
-
-        run_watch(str(two_svc_root_with_graphs), MonoConfig())
-        assert mock_proc.terminate.called
-
-    def test_bootstrap_skips_existing_graphs(self, two_svc_root_with_graphs, monkeypatch):
-        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write", lambda *a, **kw: None)
-
-        extract_calls = []
-        monkeypatch.setattr("codex_graph.multirepo.run_extract",
-                            lambda *a, **kw: extract_calls.append(True) or 0)
-        monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: make_mock_proc(None))
-        monkeypatch.setattr("codex_graph.multirepo.time.sleep",
-                            lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
-
-        run_watch(str(two_svc_root_with_graphs), MonoConfig())
-        assert extract_calls == []
-
-    def test_bootstrap_runs_extract_for_missing_graph(self, two_svc_root, monkeypatch):
-        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write", lambda *a, **kw: None)
-
-        def fake_extract(svc, path, backend, timeout=600, env=None):
-            Path(svc.graph_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(svc.graph_path).write_text("{}")
+        def fake_build(root, graphify_path, backend, timeout=1200, env=None):
+            built.append(True)
+            _write_overarching(root)
             return 0
 
-        monkeypatch.setattr("codex_graph.multirepo.run_extract", fake_extract)
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", fake_build)
+        monkeypatch.setattr("codex_graph.multirepo._refresh", lambda *a, **kw: {})
         monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: make_mock_proc(None))
         monkeypatch.setattr("codex_graph.multirepo.time.sleep",
                             lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
+        run_watch(str(two_svc_root), MonoConfig())
+        assert built == [True]
 
-        rc = run_watch(str(two_svc_root), MonoConfig())
-        assert rc == 0
-
-    def test_mtime_change_triggers_reanalyze(self, two_svc_root_with_graphs, monkeypatch):
+    def test_skips_build_when_overarching_exists(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-
-        reanalyze_calls = []
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write",
-                            lambda *a, **kw: reanalyze_calls.append(1))
+        _write_overarching(str(two_svc_root))
+        built = []
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph",
+                            lambda *a, **kw: built.append(True) or 0)
+        monkeypatch.setattr("codex_graph.multirepo._refresh", lambda *a, **kw: {})
         monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: make_mock_proc(None))
+        monkeypatch.setattr("codex_graph.multirepo.time.sleep",
+                            lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
+        run_watch(str(two_svc_root), MonoConfig())
+        assert built == []
 
-        graph_a = two_svc_root_with_graphs / "svc-a" / "graphify-out" / "graph.json"
+    def test_bootstrap_failure_returns_1(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", lambda *a, **kw: 1)
+        assert run_watch(str(two_svc_root), MonoConfig()) == 1
+
+    def test_keyboard_interrupt_returns_0(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        _write_overarching(str(two_svc_root))
+        monkeypatch.setattr("codex_graph.multirepo._refresh", lambda *a, **kw: {})
+        monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: make_mock_proc(None))
+        monkeypatch.setattr("codex_graph.multirepo.time.sleep",
+                            lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
+        assert run_watch(str(two_svc_root), MonoConfig()) == 0
+
+    def test_keyboard_interrupt_terminates_watch_proc(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        _write_overarching(str(two_svc_root))
+        monkeypatch.setattr("codex_graph.multirepo._refresh", lambda *a, **kw: {})
+        proc = make_mock_proc(None)
+        proc.poll.return_value = None
+        monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: proc)
+        monkeypatch.setattr("codex_graph.multirepo.time.sleep",
+                            lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
+        run_watch(str(two_svc_root), MonoConfig())
+        assert proc.terminate.called
+
+    def test_mtime_change_triggers_refresh(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        overarching = _write_overarching(str(two_svc_root))
+
+        refreshes = []
+        monkeypatch.setattr("codex_graph.multirepo._refresh",
+                            lambda *a, **kw: refreshes.append(1) or {})
+        proc = make_mock_proc(None)
+        proc.poll.return_value = None
+        monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: proc)
 
         sleep_count = [0]
         def fake_sleep(_):
             sleep_count[0] += 1
             if sleep_count[0] == 1:
-                graph_a.write_text('{"updated": true}')
-                os.utime(str(graph_a), (9_999_999_999.0, 9_999_999_999.0))
+                os.utime(overarching, (9_999_999_999.0, 9_999_999_999.0))
             elif sleep_count[0] >= 2:
                 raise KeyboardInterrupt
 
         monkeypatch.setattr("codex_graph.multirepo.time.sleep", fake_sleep)
+        run_watch(str(two_svc_root), MonoConfig(watch_poll_interval=0.001))
+        assert len(refreshes) >= 2
 
-        run_watch(str(two_svc_root_with_graphs), MonoConfig(watch_poll_interval=0.001))
-        assert len(reanalyze_calls) >= 2
-
-    def test_dead_watch_proc_restarted(self, two_svc_root_with_graphs, monkeypatch):
+    def test_dead_watch_proc_restarted(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write", lambda *a, **kw: None)
+        _write_overarching(str(two_svc_root))
+        monkeypatch.setattr("codex_graph.multirepo._refresh", lambda *a, **kw: {})
 
         popen_calls = [0]
-        procs = []
 
         def make_popen(*args, **kwargs):
-            proc = make_mock_proc(returncode=None)
-            if popen_calls[0] < 2:
-                proc.poll.return_value = 1
-            else:
-                proc.poll.return_value = None
+            proc = make_mock_proc(None)
+            proc.poll.return_value = 1 if popen_calls[0] < 1 else None
             popen_calls[0] += 1
-            procs.append(proc)
             return proc
 
         monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", make_popen)
@@ -870,26 +1085,5 @@ class TestRunWatch:
                 raise KeyboardInterrupt
 
         monkeypatch.setattr("codex_graph.multirepo.time.sleep", fake_sleep)
-
-        run_watch(str(two_svc_root_with_graphs), MonoConfig(watch_poll_interval=0.001))
-        assert popen_calls[0] > 2
-
-    def test_single_service_skips_initial_bridge_analysis(self, tmp_path, monkeypatch):
-        d = tmp_path / "only-svc"
-        d.mkdir()
-        (d / "pyproject.toml").touch()
-        graph_path = d / "graphify-out" / "graph.json"
-        graph_path.parent.mkdir(parents=True)
-        graph_path.write_text("{}")
-
-        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
-
-        reanalyze_calls = []
-        monkeypatch.setattr("codex_graph.multirepo._reanalyze_and_write",
-                            lambda *a, **kw: reanalyze_calls.append(1))
-        monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: make_mock_proc(None))
-        monkeypatch.setattr("codex_graph.multirepo.time.sleep",
-                            lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
-
-        run_watch(str(tmp_path), MonoConfig())
-        assert reanalyze_calls == []
+        run_watch(str(two_svc_root), MonoConfig(watch_poll_interval=0.001))
+        assert popen_calls[0] >= 2

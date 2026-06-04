@@ -12,6 +12,20 @@ from dataclasses import dataclass, field
 from codex_graph.config import MonoConfig
 
 
+SOURCE_EXTENSIONS = frozenset({
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte",
+    ".go", ".rs", ".java", ".kt", ".rb", ".php", ".cs", ".swift", ".scala",
+    ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm", ".dart", ".ex", ".exs",
+})
+
+SKIP_DIRS = frozenset({
+    "node_modules", "dist", "build", "out", "target", "vendor", "bin", "obj",
+    "__pycache__", "graphify-out", "venv", ".venv", "env", "site-packages",
+    ".next", ".nuxt", "coverage", "test-results", "playwright-report",
+    ".pytest_cache", ".mypy_cache", ".git", ".github", ".idea", ".vscode",
+})
+
+
 def _find_env_file(start: str) -> str | None:
     current = os.path.abspath(start)
     while True:
@@ -24,20 +38,48 @@ def _find_env_file(start: str) -> str | None:
         current = parent
 
 
-def _load_env_file(root: str) -> dict[str, str]:
+def _parse_env_file(path: str) -> dict[str, str]:
     env_vars: dict[str, str] = {}
-    path = _find_env_file(root) or _find_env_file(os.getcwd())
-    if path:
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):]
+                key, _, value = line.partition("=")
+                env_vars[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return env_vars
+
+
+def _env_file_sources(root: str) -> list[str]:
+    sources: list[str] = []
+    seen: set[str] = set()
+
+    def _add(path: str | None) -> None:
+        if path and path not in seen and os.path.isfile(path):
+            seen.add(path)
+            sources.append(path)
+
+    _add(_find_env_file(root))
+    _add(_find_env_file(os.getcwd()))
+    for base in (root, os.getcwd()):
         try:
-            with open(path) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, _, value = line.partition("=")
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+            for entry in sorted(os.listdir(base)):
+                _add(os.path.join(base, entry, ".env"))
         except OSError:
             pass
+    return sources
+
+
+def _load_env_file(root: str) -> dict[str, str]:
+    env_vars: dict[str, str] = {}
+    for path in _env_file_sources(root):
+        for key, value in _parse_env_file(path).items():
+            env_vars.setdefault(key, value)
     if "ANTHROPIC_KEY" in env_vars and "ANTHROPIC_API_KEY" not in env_vars:
         env_vars["ANTHROPIC_API_KEY"] = env_vars["ANTHROPIC_KEY"]
     return env_vars
@@ -67,6 +109,23 @@ class BridgeRow:
     remote_symbol: str
 
 
+def _has_source_files(path: str, max_depth: int = 4) -> bool:
+    base = path.rstrip(os.sep).count(os.sep)
+    for dirpath, dirnames, filenames in os.walk(path):
+        depth = dirpath.count(os.sep) - base
+        if depth >= max_depth:
+            dirnames[:] = []
+        else:
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in SKIP_DIRS and not d.startswith(".")
+            ]
+        for fn in filenames:
+            if os.path.splitext(fn)[1] in SOURCE_EXTENSIONS:
+                return True
+    return False
+
+
 def detect_services(root: str, marker_files: list[str]) -> list[ServiceInfo]:
     services = []
     marker_set = set(marker_files)
@@ -78,14 +137,17 @@ def detect_services(root: str, marker_files: list[str]) -> list[ServiceInfo]:
         abs_path = os.path.join(root, entry)
         if not os.path.isdir(abs_path):
             continue
-        for marker in marker_set:
-            if os.path.exists(os.path.join(abs_path, marker)):
-                services.append(ServiceInfo(
-                    name=entry,
-                    abs_path=abs_path,
-                    graph_path=os.path.join(abs_path, "graphify-out", "graph.json"),
-                ))
-                break
+        if entry in SKIP_DIRS or entry.startswith("."):
+            continue
+        has_marker = any(
+            os.path.exists(os.path.join(abs_path, marker)) for marker in marker_set
+        )
+        if has_marker or _has_source_files(abs_path):
+            services.append(ServiceInfo(
+                name=entry,
+                abs_path=abs_path,
+                graph_path=os.path.join(abs_path, "graphify-out", "graph.json"),
+            ))
     return services
 
 
@@ -99,13 +161,13 @@ def _stream_proc(proc: subprocess.Popen, timeout: int) -> int:
     t_err = threading.Thread(target=_relay, args=(proc.stderr, sys.stderr), daemon=True)
     t_out.start()
     t_err.start()
-    t_out.join()
-    t_err.join()
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+    t_out.join(timeout=5)
+    t_err.join(timeout=5)
     return proc.returncode
 
 
@@ -128,25 +190,70 @@ def run_extract(
     return _stream_proc(proc, timeout)
 
 
-def run_merge(
-    services: list[ServiceInfo],
+def _overarching_graph_path(root: str) -> str:
+    return os.path.join(root, "graphify-out", "graph.json")
+
+
+def _overarching_service(root: str) -> ServiceInfo:
+    return ServiceInfo(
+        name="overarching (whole repo)",
+        abs_path=root,
+        graph_path=_overarching_graph_path(root),
+    )
+
+
+def build_overarching_graph(
+    root: str,
     graphify_path: str,
-    merged_out: str,
-    timeout: int = 120,
+    backend: str,
+    timeout: int = 1200,
     env: dict[str, str] | None = None,
 ) -> int:
-    os.makedirs(os.path.dirname(merged_out), exist_ok=True)
-    graph_paths = [s.graph_path for s in services]
-    print(f"[codex-graph] merging {len(graph_paths)} graphs ...", file=sys.stderr)
-    proc = subprocess.Popen(
-        [graphify_path, "merge-graphs", *graph_paths, "--out", merged_out],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        env=env,
-    )
-    return _stream_proc(proc, timeout)
+    return run_extract(_overarching_service(root), graphify_path, backend, timeout=timeout, env=env)
+
+
+def _graph_links(graph: dict) -> list[dict]:
+    links = graph.get("links")
+    if links is None:
+        links = graph.get("edges", [])
+    return links
+
+
+def partition_graph(
+    overarching_graph_path: str,
+    services: list[ServiceInfo],
+) -> dict[str, int]:
+    with open(overarching_graph_path) as f:
+        graph = json.load(f)
+
+    service_names = {s.name for s in services}
+    node_svc: dict[str, str] = {}
+    per_nodes: dict[str, list[dict]] = {s.name: [] for s in services}
+    for node in graph.get("nodes", []):
+        svc = _service_of(node.get("source_file", ""), service_names)
+        if svc is not None:
+            node_svc[node.get("id")] = svc
+            per_nodes[svc].append(node)
+
+    per_links: dict[str, list[dict]] = {s.name: [] for s in services}
+    for link in _graph_links(graph):
+        src_svc = node_svc.get(link.get("source"))
+        tgt_svc = node_svc.get(link.get("target"))
+        if src_svc is not None and src_svc == tgt_svc:
+            per_links[src_svc].append(link)
+
+    base_meta = {k: v for k, v in graph.items() if k not in ("nodes", "links", "edges")}
+    counts: dict[str, int] = {}
+    for svc in services:
+        out_dir = os.path.join(svc.abs_path, "graphify-out")
+        os.makedirs(out_dir, exist_ok=True)
+        subgraph = dict(base_meta)
+        subgraph["nodes"] = per_nodes[svc.name]
+        subgraph["links"] = per_links[svc.name]
+        with open(svc.graph_path, "w") as f:
+            json.dump(subgraph, f, indent=2)
+        counts[svc.name] = len(per_nodes[svc.name])
+    return counts
 
 
 def _service_of(source_file: str, service_names: set[str]) -> str | None:
@@ -157,17 +264,17 @@ def _service_of(source_file: str, service_names: set[str]) -> str | None:
 
 
 def analyze_bridges(
-    merged_graph_path: str,
+    overarching_graph_path: str,
     services: list[ServiceInfo],
 ) -> dict[str, list[BridgeRow]]:
-    with open(merged_graph_path) as f:
+    with open(overarching_graph_path) as f:
         graph = json.load(f)
 
     service_names = {s.name for s in services}
     node_by_id: dict[str, dict] = {n["id"]: n for n in graph.get("nodes", [])}
     bridges: dict[str, list[BridgeRow]] = {s.name: [] for s in services}
 
-    for link in graph.get("links", []):
+    for link in _graph_links(graph):
         src_node = node_by_id.get(link.get("source", ""))
         tgt_node = node_by_id.get(link.get("target", ""))
         if not src_node or not tgt_node:
@@ -280,22 +387,18 @@ def write_copilot_instructions(root: str, services: list[ServiceInfo]) -> str:
     return path
 
 
-def _reanalyze_and_write(
+def _refresh(
     root: str,
     services: list[ServiceInfo],
-    graphify_path: str,
-    merged_out: str,
-    env: dict[str, str] | None = None,
-) -> None:
-    rc = run_merge(services, graphify_path, merged_out, env=env)
-    if rc != 0:
-        print(f"[codex-graph] merge failed (exit {rc})", file=sys.stderr)
-        return
-    bridges = analyze_bridges(merged_out, services)
+    overarching_graph_path: str,
+) -> dict[str, list[BridgeRow]]:
+    partition_graph(overarching_graph_path, services)
+    bridges = analyze_bridges(overarching_graph_path, services)
     for svc in services:
         write_bridges_md(svc, bridges[svc.name])
     write_monorepo_map(root, services)
     write_copilot_instructions(root, services)
+    return bridges
 
 
 def run_map(
@@ -312,7 +415,7 @@ def run_map(
 
     services = detect_services(root, mono_cfg.marker_files)
     if not services:
-        print(f"No services detected in {root}. Add marker files (package.json, pyproject.toml, etc.) to subdirectories.", file=sys.stderr)
+        print(f"No services detected in {root}. Add code to subdirectories (or marker files like package.json/pyproject.toml).", file=sys.stderr)
         return 1
 
     if dry_run:
@@ -324,40 +427,25 @@ def run_map(
 
     backend = backend_override or mono_cfg.graphify_backend
     env = _build_subprocess_env(root)
-    succeeded: list[ServiceInfo] = []
-    total = len(services)
-    for i, svc in enumerate(services, 1):
-        print(f"[codex-graph] [{i}/{total}] extracting {svc.name}", file=sys.stderr)
-        rc = run_extract(svc, graphify_path, backend, env=env)
-        if rc == 0 and os.path.exists(svc.graph_path):
-            succeeded.append(svc)
-        else:
-            print(f"[codex-graph] WARNING: extraction failed for {svc.name} (exit {rc})", file=sys.stderr)
+    overarching_path = _overarching_graph_path(root)
 
-    if not succeeded:
-        print("Error: no service graphs were built successfully.", file=sys.stderr)
+    print(f"[codex-graph] Building overarching graph across {len(services)} service(s): {', '.join(s.name for s in services)}", file=sys.stderr)
+    rc = build_overarching_graph(root, graphify_path, backend, env=env)
+    if rc != 0 or not os.path.exists(overarching_path):
+        print(f"Error: overarching graphify extraction failed (exit {rc}).", file=sys.stderr)
+        print("  Ensure an API key is available (e.g. ANTHROPIC_API_KEY or ANTHROPIC_KEY in a .env file).", file=sys.stderr)
         return 1
 
-    print(f"\nDone. {len(succeeded)}/{total} services mapped.")
-    for svc in succeeded:
-        print(f"  {svc.name} graph : {svc.graph_path}")
+    bridges = _refresh(root, services, overarching_path)
+    total_bridges = sum(len(rows) for rows in bridges.values())
 
-    copilot_path = os.path.join(root, ".github", "copilot-instructions.md")
-
-    if len(succeeded) < 2:
-        print("  (only 1 service — skipping merge and bridge analysis)")
-        write_copilot_instructions(root, succeeded)
-        print(f"  Copilot instructions : {copilot_path}")
-        return 0
-
-    merged_out = os.path.join(root, "graphify-out", "merged-graph.json")
-    _reanalyze_and_write(root, succeeded, graphify_path, merged_out, env=env)
-
-    print(f"  Merged graph : {merged_out}")
-    print(f"  Monorepo map : {os.path.join(root, 'graphify-out', 'MONOREPO_MAP.md')}")
-    for svc in succeeded:
-        print(f"  {svc.name} bridges : {os.path.join(svc.abs_path, 'graphify-out', 'BRIDGES.md')}")
-    print(f"  Copilot instructions : {copilot_path}")
+    print(f"\nDone. {len(services)} service(s) mapped, {total_bridges} cross-service connection(s) found.")
+    print(f"  Overarching graph    : {overarching_path}")
+    for svc in services:
+        to = ", ".join(svc.bridges_to) if svc.bridges_to else "none"
+        print(f"  {svc.name}/graphify-out/  (bridges -> {to})")
+    print(f"  Monorepo map         : {os.path.join(root, 'graphify-out', 'MONOREPO_MAP.md')}")
+    print(f"  Copilot instructions : {os.path.join(root, '.github', 'copilot-instructions.md')}")
     return 0
 
 
@@ -379,76 +467,55 @@ def run_watch(
 
     backend = backend_override or mono_cfg.graphify_backend
     env = _build_subprocess_env(root)
-    merged_out = os.path.join(root, "graphify-out", "merged-graph.json")
+    overarching_path = _overarching_graph_path(root)
 
-    print(f"[codex-graph] Bootstrapping {len(services)} service(s) ...", file=sys.stderr)
-    active: list[ServiceInfo] = []
-    for svc in services:
-        if not os.path.exists(svc.graph_path):
-            rc = run_extract(svc, graphify_path, backend, env=env)
-            if rc != 0:
-                print(f"[codex-graph] WARNING: bootstrap extraction failed for {svc.name}", file=sys.stderr)
-                continue
-        active.append(svc)
+    if not os.path.exists(overarching_path):
+        print(f"[codex-graph] Bootstrapping overarching graph for {len(services)} service(s) ...", file=sys.stderr)
+        rc = build_overarching_graph(root, graphify_path, backend, env=env)
+        if rc != 0 or not os.path.exists(overarching_path):
+            print(f"Error: bootstrap extraction failed (exit {rc}).", file=sys.stderr)
+            return 1
 
-    if len(active) >= 2:
-        _reanalyze_and_write(root, active, graphify_path, merged_out, env=env)
-    elif active:
-        print("[codex-graph] WARNING: only 1 service graph available; bridge analysis skipped until more services extract.", file=sys.stderr)
+    _refresh(root, services, overarching_path)
 
-    watch_procs: dict[str, subprocess.Popen] = {}
-
-    def _start_watch(svc: ServiceInfo) -> subprocess.Popen:
+    def _start_watch() -> subprocess.Popen:
         return subprocess.Popen(
-            [graphify_path, "watch", svc.abs_path],
+            [graphify_path, "watch", root],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=env,
         )
 
-    for svc in active:
-        watch_procs[svc.name] = _start_watch(svc)
-        print(f"[codex-graph] watching {svc.name}", file=sys.stderr)
+    watch_proc = _start_watch()
+    try:
+        last_mtime = os.stat(overarching_path).st_mtime
+    except OSError:
+        last_mtime = 0.0
 
-    mtimes: dict[str, float] = {}
-    for svc in active:
-        try:
-            mtimes[svc.name] = os.stat(svc.graph_path).st_mtime
-        except OSError:
-            mtimes[svc.name] = 0.0
-
-    print("[codex-graph] Watch active. Press Ctrl-C to stop.", file=sys.stderr)
+    print(f"[codex-graph] Watching {root} ({len(services)} service(s)). Press Ctrl-C to stop.", file=sys.stderr)
     try:
         while True:
             time.sleep(mono_cfg.watch_poll_interval)
 
-            changed = []
-            for svc in active:
-                try:
-                    mtime = os.stat(svc.graph_path).st_mtime
-                except OSError:
-                    continue
-                if mtime != mtimes[svc.name]:
-                    mtimes[svc.name] = mtime
-                    changed.append(svc.name)
-
-            if changed:
+            try:
+                mtime = os.stat(overarching_path).st_mtime
+            except OSError:
+                mtime = last_mtime
+            if mtime != last_mtime:
+                last_mtime = mtime
                 ts = time.strftime("%H:%M:%S")
-                print(f"[codex-graph] {ts} graph updated: {', '.join(changed)} — re-analyzing bridges ...", file=sys.stderr)
-                _reanalyze_and_write(root, active, graphify_path, merged_out, env=env)
+                print(f"[codex-graph] {ts} graph updated — re-partitioning and re-analyzing bridges ...", file=sys.stderr)
+                _refresh(root, services, overarching_path)
 
-            for svc in list(active):
-                proc = watch_procs.get(svc.name)
-                if proc and proc.poll() is not None:
-                    print(f"[codex-graph] WARNING: graphify watch exited for {svc.name} (exit {proc.returncode}), restarting ...", file=sys.stderr)
-                    watch_procs[svc.name] = _start_watch(svc)
+            if watch_proc.poll() is not None:
+                print(f"[codex-graph] WARNING: graphify watch exited (exit {watch_proc.returncode}), restarting ...", file=sys.stderr)
+                watch_proc = _start_watch()
 
     except KeyboardInterrupt:
         print("\n[codex-graph] Stopping watch ...", file=sys.stderr)
-        for proc in watch_procs.values():
-            proc.terminate()
-        for proc in watch_procs.values():
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        watch_proc.terminate()
+        try:
+            watch_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            watch_proc.kill()
         return 0
