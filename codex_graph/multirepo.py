@@ -12,25 +12,32 @@ from dataclasses import dataclass, field
 from codex_graph.config import MonoConfig
 
 
+def _find_env_file(start: str) -> str | None:
+    current = os.path.abspath(start)
+    while True:
+        candidate = os.path.join(current, ".env")
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
 def _load_env_file(root: str) -> dict[str, str]:
     env_vars: dict[str, str] = {}
-    candidates = [
-        os.path.join(root, ".env"),
-        os.path.join(os.getcwd(), ".env"),
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            try:
-                with open(path) as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith("#") or "=" not in line:
-                            continue
-                        key, _, value = line.partition("=")
-                        env_vars[key.strip()] = value.strip().strip('"').strip("'")
-            except OSError:
-                pass
-            break
+    path = _find_env_file(root) or _find_env_file(os.getcwd())
+    if path:
+        try:
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, value = line.partition("=")
+                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+        except OSError:
+            pass
     if "ANTHROPIC_KEY" in env_vars and "ANTHROPIC_API_KEY" not in env_vars:
         env_vars["ANTHROPIC_API_KEY"] = env_vars["ANTHROPIC_KEY"]
     return env_vars
@@ -228,6 +235,51 @@ def write_monorepo_map(root: str, services: list[ServiceInfo]) -> str:
     return path
 
 
+def write_copilot_instructions(root: str, services: list[ServiceInfo]) -> str:
+    gh_dir = os.path.join(root, ".github")
+    os.makedirs(gh_dir, exist_ok=True)
+    path = os.path.join(gh_dir, "copilot-instructions.md")
+
+    map_rel = os.path.relpath(os.path.join(root, "graphify-out", "MONOREPO_MAP.md"), root)
+
+    lines = [
+        "# Copilot Instructions",
+        "",
+        "This repository uses graphify knowledge graphs for architecture-aware code navigation.",
+        "Before making changes, consult the relevant architecture files below to understand",
+        "cross-service dependencies and avoid breaking integrations.",
+        "",
+        "## Monorepo Map",
+        "",
+        f"[{map_rel}]({map_rel}) — overview of all services and their cross-service connections.",
+        "",
+        "## Per-Service Graphs and Bridges",
+        "",
+        "| Service | Knowledge Graph | Cross-Service Bridges |",
+        "|---|---|---|",
+    ]
+    for svc in services:
+        graph_rel = os.path.relpath(svc.graph_path, root)
+        bridges_rel = os.path.relpath(
+            os.path.join(svc.abs_path, "graphify-out", "BRIDGES.md"), root
+        )
+        lines.append(f"| {svc.name} | [{graph_rel}]({graph_rel}) | [{bridges_rel}]({bridges_rel}) |")
+
+    lines += [
+        "",
+        "## How to Use",
+        "",
+        "- **Working in a service?** Open its `BRIDGES.md` first to see what other services it depends on.",
+        "- **Refactoring a symbol?** Check the knowledge graph (`graph.json`) to find all callers and dependencies.",
+        "- **Adding a cross-service feature?** Check `MONOREPO_MAP.md` to understand the full dependency graph.",
+        "- Graphs are kept up-to-date automatically by `codex-graph watch`.",
+    ]
+
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return path
+
+
 def _reanalyze_and_write(
     root: str,
     services: list[ServiceInfo],
@@ -243,6 +295,7 @@ def _reanalyze_and_write(
     for svc in services:
         write_bridges_md(svc, bridges[svc.name])
     write_monorepo_map(root, services)
+    write_copilot_instructions(root, services)
 
 
 def run_map(
@@ -289,8 +342,12 @@ def run_map(
     for svc in succeeded:
         print(f"  {svc.name} graph : {svc.graph_path}")
 
+    copilot_path = os.path.join(root, ".github", "copilot-instructions.md")
+
     if len(succeeded) < 2:
         print("  (only 1 service — skipping merge and bridge analysis)")
+        write_copilot_instructions(root, succeeded)
+        print(f"  Copilot instructions : {copilot_path}")
         return 0
 
     merged_out = os.path.join(root, "graphify-out", "merged-graph.json")
@@ -300,6 +357,7 @@ def run_map(
     print(f"  Monorepo map : {os.path.join(root, 'graphify-out', 'MONOREPO_MAP.md')}")
     for svc in succeeded:
         print(f"  {svc.name} bridges : {os.path.join(svc.abs_path, 'graphify-out', 'BRIDGES.md')}")
+    print(f"  Copilot instructions : {copilot_path}")
     return 0
 
 

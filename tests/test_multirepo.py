@@ -13,6 +13,7 @@ from codex_graph.config import MonoConfig
 from codex_graph.multirepo import (
     BridgeRow,
     ServiceInfo,
+    _find_env_file,
     _load_env_file,
     _service_of,
     _stream_proc,
@@ -23,9 +24,36 @@ from codex_graph.multirepo import (
     run_merge,
     run_watch,
     write_bridges_md,
+    write_copilot_instructions,
     write_monorepo_map,
 )
 from tests.conftest import make_mock_proc, write_graph
+
+
+# ── _find_env_file ────────────────────────────────────────────────────────────
+
+class TestFindEnvFile:
+    def test_finds_env_in_start_dir(self, tmp_path):
+        (tmp_path / ".env").write_text("X=1\n")
+        assert _find_env_file(str(tmp_path)) == str(tmp_path / ".env")
+
+    def test_walks_up_to_parent(self, tmp_path):
+        child = tmp_path / "a" / "b"
+        child.mkdir(parents=True)
+        (tmp_path / ".env").write_text("X=1\n")
+        assert _find_env_file(str(child)) == str(tmp_path / ".env")
+
+    def test_returns_none_when_not_found(self, tmp_path):
+        child = tmp_path / "sub"
+        child.mkdir()
+        assert _find_env_file(str(child)) is None
+
+    def test_prefers_closer_env_file(self, tmp_path):
+        child = tmp_path / "sub"
+        child.mkdir()
+        (tmp_path / ".env").write_text("SOURCE=parent\n")
+        (child / ".env").write_text("SOURCE=child\n")
+        assert _find_env_file(str(child)) == str(child / ".env")
 
 
 # ── _load_env_file ────────────────────────────────────────────────────────────
@@ -73,13 +101,13 @@ class TestLoadEnvFile:
         (tmp_path / ".env").write_text("KEY=val=with=equals\n")
         assert _load_env_file(str(tmp_path))["KEY"] == "val=with=equals"
 
-    def test_cwd_env_file_used_as_fallback(self, tmp_path, monkeypatch):
-        other = tmp_path / "other"
-        other.mkdir()
-        (tmp_path / ".env").write_text("FROM_CWD=yes\n")
-        monkeypatch.chdir(tmp_path)
-        result = _load_env_file(str(other))
-        assert result.get("FROM_CWD") == "yes"
+    def test_walks_up_tree_when_env_not_in_root(self, tmp_path, monkeypatch):
+        child = tmp_path / "sub" / "project"
+        child.mkdir(parents=True)
+        (tmp_path / ".env").write_text("FROM_PARENT=yes\n")
+        monkeypatch.chdir(child)
+        result = _load_env_file(str(child))
+        assert result.get("FROM_PARENT") == "yes"
 
 
 # ── _service_of ──────────────────────────────────────────────────────────────
@@ -539,6 +567,52 @@ class TestWriteMonorepoMap:
         content = Path(path).read_text()
         assert "auth-svc" in content
         assert "user-svc" in content
+
+
+# ── write_copilot_instructions ───────────────────────────────────────────────
+
+class TestWriteCopilotInstructions:
+    def test_creates_file_at_github_path(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        path = write_copilot_instructions(str(tmp_path), [svc])
+        assert path == str(tmp_path / ".github" / "copilot-instructions.md")
+        assert os.path.exists(path)
+
+    def test_creates_github_directory(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        write_copilot_instructions(str(tmp_path), [svc])
+        assert (tmp_path / ".github").is_dir()
+
+    def test_lists_all_services(self, tmp_path):
+        services = [
+            ServiceInfo("auth-svc", str(tmp_path / "auth-svc"), str(tmp_path / "auth-svc/graphify-out/graph.json")),
+            ServiceInfo("user-svc", str(tmp_path / "user-svc"), str(tmp_path / "user-svc/graphify-out/graph.json")),
+        ]
+        path = write_copilot_instructions(str(tmp_path), services)
+        content = Path(path).read_text()
+        assert "auth-svc" in content
+        assert "user-svc" in content
+
+    def test_graph_paths_are_relative(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        path = write_copilot_instructions(str(tmp_path), [svc])
+        content = Path(path).read_text()
+        assert str(tmp_path) not in content
+
+    def test_contains_bridges_reference(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        path = write_copilot_instructions(str(tmp_path), [svc])
+        assert "BRIDGES.md" in Path(path).read_text()
+
+    def test_contains_monorepo_map_reference(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        path = write_copilot_instructions(str(tmp_path), [svc])
+        assert "MONOREPO_MAP.md" in Path(path).read_text()
+
+    def test_contains_how_to_use_section(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        path = write_copilot_instructions(str(tmp_path), [svc])
+        assert "## How to Use" in Path(path).read_text()
 
 
 # ── run_map ──────────────────────────────────────────────────────────────────
