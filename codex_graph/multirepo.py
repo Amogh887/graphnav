@@ -281,17 +281,21 @@ def run_map(
         else:
             print(f"[codex-graph] WARNING: extraction failed for {svc.name} (exit {rc})", file=sys.stderr)
 
-    if len(succeeded) < 2:
-        print(
-            f"Error: need at least 2 successful service graphs to merge (got {len(succeeded)}).",
-            file=sys.stderr,
-        )
+    if not succeeded:
+        print("Error: no service graphs were built successfully.", file=sys.stderr)
         return 1
+
+    print(f"\nDone. {len(succeeded)}/{total} services mapped.")
+    for svc in succeeded:
+        print(f"  {svc.name} graph : {svc.graph_path}")
+
+    if len(succeeded) < 2:
+        print("  (only 1 service — skipping merge and bridge analysis)")
+        return 0
 
     merged_out = os.path.join(root, "graphify-out", "merged-graph.json")
     _reanalyze_and_write(root, succeeded, graphify_path, merged_out, env=env)
 
-    print(f"\nDone. {len(succeeded)}/{total} services mapped.")
     print(f"  Merged graph : {merged_out}")
     print(f"  Monorepo map : {os.path.join(root, 'graphify-out', 'MONOREPO_MAP.md')}")
     for svc in succeeded:

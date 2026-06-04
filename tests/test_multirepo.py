@@ -616,7 +616,7 @@ class TestRunMap:
         assert call_count[0] == 2
         assert "WARNING" in capsys.readouterr().err
 
-    def test_only_one_success_returns_1(self, two_svc_root, monkeypatch):
+    def test_only_one_success_skips_merge(self, two_svc_root, monkeypatch, capsys):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
 
         def fake_extract(svc, path, backend, timeout=600, env=None):
@@ -627,7 +627,9 @@ class TestRunMap:
             return 1
 
         monkeypatch.setattr("codex_graph.multirepo.run_extract", fake_extract)
-        assert run_map(str(two_svc_root), MonoConfig()) == 1
+        assert run_map(str(two_svc_root), MonoConfig()) == 0
+        out = capsys.readouterr().out
+        assert "only 1 service" in out
 
     def test_full_success_returns_0(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
