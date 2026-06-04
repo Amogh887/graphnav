@@ -816,7 +816,7 @@ class TestWriteCopilotInstructions:
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
         path = write_copilot_instructions(str(tmp_path), [svc])
         content = Path(path).read_text().lower()
-        assert "small" in content and "ignore the rest" in content
+        assert "single-line" in content and "no further" in content
 
     def test_also_writes_agents_md(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
