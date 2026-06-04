@@ -1,0 +1,21 @@
+[graph]
+path = "graphify-out/graph.json"
+project_root = "."
+skip_patterns = ["playwright-report", "node_modules", ".git"]
+
+[query]
+top_k = 5
+community_boost_weight = 2.0
+bm25_k1 = 1.5
+bm25_b = 0.75
+
+[context]
+max_file_chars = 8000
+show_scores = false
+
+[codex]
+command = "codex"
+subcommand = "exec"
+extra_args = []
+inject_via = "stdin"
+timeout_seconds = 300
