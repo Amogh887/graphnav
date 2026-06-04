@@ -107,6 +107,8 @@ class BridgeRow:
     remote_svc: str
     remote_file: str
     remote_symbol: str
+    local_loc: str = ""
+    remote_loc: str = ""
 
 
 def _has_source_files(path: str, max_depth: int = 4) -> bool:
@@ -302,6 +304,8 @@ def analyze_bridges(
             remote_svc=remote_svc,
             remote_file=remote_node.get("source_file", ""),
             remote_symbol=remote_node.get("label", ""),
+            local_loc=local_node.get("source_location", ""),
+            remote_loc=remote_node.get("source_location", ""),
         ))
 
     for svc in services:
@@ -319,12 +323,65 @@ def write_bridges_md(service: ServiceInfo, rows: list[BridgeRow]) -> str:
     if not rows:
         lines.append("_No cross-service connections detected._")
     else:
-        lines.append("| Local File | Symbol | Relation | → Service | Remote File | Remote Symbol |")
-        lines.append("|---|---|---|---|---|---|")
+        lines.append(
+            "> Editing a Local symbol below may require changes to the Remote symbol. "
+            'Run `graphify affected "<symbol>"` to confirm impact before changing it.'
+        )
+        lines.append("")
+        lines.append("| Local File | Symbol | Loc | Relation | → Service | Remote File | Remote Symbol | Loc |")
+        lines.append("|---|---|---|---|---|---|---|---|")
         for r in rows:
-            lines.append(f"| {r.local_file} | {r.local_symbol} | {r.relation} | {r.remote_svc} | {r.remote_file} | {r.remote_symbol} |")
+            lines.append(
+                f"| {r.local_file} | {r.local_symbol} | {r.local_loc} | {r.relation} | "
+                f"{r.remote_svc} | {r.remote_file} | {r.remote_symbol} | {r.remote_loc} |"
+            )
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")
+    return path
+
+
+def _symbols_by_file(graph: dict, prefix_strip: str = "") -> dict[str, list[tuple[str, str]]]:
+    out: dict[str, list[tuple[str, str]]] = {}
+    for node in graph.get("nodes", []):
+        if node.get("file_type") != "code":
+            continue
+        sf = node.get("source_file", "")
+        label = node.get("label", "")
+        if not sf or not label or label == os.path.basename(sf):
+            continue
+        if os.path.splitext(sf)[1] not in SOURCE_EXTENSIONS:
+            continue
+        key = sf
+        if prefix_strip and key.startswith(prefix_strip + "/"):
+            key = key[len(prefix_strip) + 1:]
+        out.setdefault(key, []).append((label, node.get("source_location", "")))
+    return out
+
+
+def write_symbols_md(service: ServiceInfo) -> str:
+    out_dir = os.path.join(service.abs_path, "graphify-out")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "SYMBOLS.md")
+    try:
+        with open(service.graph_path) as f:
+            graph = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        graph = {"nodes": []}
+
+    by_file = _symbols_by_file(graph, prefix_strip=service.name)
+    lines = [f"# Symbols: {service.name}", ""]
+    if not by_file:
+        lines.append("_No code symbols extracted._")
+    else:
+        lines.append("Open a symbol by its `file:line` instead of reading whole files.")
+        lines.append("")
+        for sf in sorted(by_file):
+            lines.append(f"## {sf}")
+            for label, loc in by_file[sf]:
+                lines.append(f"- {label}{(' — ' + loc) if loc else ''}")
+            lines.append("")
+    with open(path, "w") as f:
+        f.write("\n".join(lines).rstrip() + "\n")
     return path
 
 
@@ -342,49 +399,150 @@ def write_monorepo_map(root: str, services: list[ServiceInfo]) -> str:
     return path
 
 
-def write_copilot_instructions(root: str, services: list[ServiceInfo]) -> str:
-    gh_dir = os.path.join(root, ".github")
-    os.makedirs(gh_dir, exist_ok=True)
-    path = os.path.join(gh_dir, "copilot-instructions.md")
+_BLOCK_START = "<!-- codex-graph:start -->"
+_BLOCK_END = "<!-- codex-graph:end -->"
 
-    map_rel = os.path.relpath(os.path.join(root, "graphify-out", "MONOREPO_MAP.md"), root)
 
+def build_playbook_text(root: str, services: list[ServiceInfo]) -> str:
+    svc_names = ", ".join(s.name for s in services) if services else "(single project)"
     lines = [
-        "# Copilot Instructions",
+        "# Coding with the codebase knowledge graph",
         "",
-        "This repository uses graphify knowledge graphs for architecture-aware code navigation.",
-        "Before making changes, consult the relevant architecture files below to understand",
-        "cross-service dependencies and avoid breaking integrations.",
+        "This repo has a graphify knowledge graph. Use it to code with minimal context.",
         "",
-        "## Monorepo Map",
+        "**First, judge scope:**",
+        "- Small/local edit (a file already open, a rename, a one-line fix, formatting)? "
+        "Just make it — ignore the rest of this section.",
+        "- Spans multiple files/services, or touches unfamiliar code? Then:",
+        '  1. Run `codex-graph context "<task>"` — prints the minimal files, their symbol '
+        "`file:line` locations, and any cross-service impact.",
+        "  2. Open ONLY those files; read the given `file:line` regions, not whole files.",
+        '  3. Before changing a symbol flagged "Cross-service impact", run '
+        '`graphify affected "<symbol>"`.',
+        "  4. Implement, then run the project's tests.",
         "",
-        f"[{map_rel}]({map_rel}) — overview of all services and their cross-service connections.",
-        "",
-        "## Per-Service Graphs and Bridges",
-        "",
-        "| Service | Knowledge Graph | Cross-Service Bridges |",
-        "|---|---|---|",
+        f"Services: {svc_names}",
+        "On-demand maps (open only when needed): `graphify-out/MONOREPO_MAP.md` · "
+        "`<service>/graphify-out/SYMBOLS.md` · `<service>/graphify-out/BRIDGES.md`",
     ]
-    for svc in services:
-        graph_rel = os.path.relpath(svc.graph_path, root)
-        bridges_rel = os.path.relpath(
-            os.path.join(svc.abs_path, "graphify-out", "BRIDGES.md"), root
-        )
-        lines.append(f"| {svc.name} | [{graph_rel}]({graph_rel}) | [{bridges_rel}]({bridges_rel}) |")
+    return "\n".join(lines)
 
-    lines += [
-        "",
-        "## How to Use",
-        "",
-        "- **Working in a service?** Open its `BRIDGES.md` first to see what other services it depends on.",
-        "- **Refactoring a symbol?** Check the knowledge graph (`graph.json`) to find all callers and dependencies.",
-        "- **Adding a cross-service feature?** Check `MONOREPO_MAP.md` to understand the full dependency graph.",
-        "- Graphs are kept up-to-date automatically by `codex-graph watch`.",
-    ]
 
+def _write_managed_block(path: str, content: str) -> None:
+    block = f"{_BLOCK_START}\n{content}\n{_BLOCK_END}\n"
+    existing = ""
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                existing = f.read()
+        except OSError:
+            existing = ""
+
+    if _BLOCK_START in existing and _BLOCK_END in existing:
+        before = existing.split(_BLOCK_START, 1)[0]
+        after = existing.split(_BLOCK_END, 1)[1]
+        new_content = before + block.rstrip("\n") + after
+    elif existing.strip():
+        new_content = existing.rstrip("\n") + "\n\n" + block
+    else:
+        new_content = block
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w") as f:
-        f.write("\n".join(lines) + "\n")
-    return path
+        f.write(new_content)
+
+
+def write_copilot_instructions(root: str, services: list[ServiceInfo]) -> str:
+    content = build_playbook_text(root, services)
+    copilot_path = os.path.join(root, ".github", "copilot-instructions.md")
+    agents_path = os.path.join(root, "AGENTS.md")
+    _write_managed_block(copilot_path, content)
+    _write_managed_block(agents_path, content)
+    return copilot_path
+
+
+def build_context_pack(
+    root: str,
+    task: str,
+    top_files: int = 8,
+    budget_tokens: int = 2000,
+    skip_patterns: list[str] | None = None,
+) -> str:
+    from codex_graph.graph_query import load_index, query_files
+
+    root = os.path.abspath(root)
+    overarching_path = _overarching_graph_path(root)
+    if not os.path.exists(overarching_path):
+        rel = os.path.relpath(overarching_path, root)
+        return (
+            f"# Context for: {task}\n\n"
+            f"No knowledge graph found at {rel}.\n"
+            "Run `codex-graph map` (monorepo) or `graphify extract .` first.\n"
+        )
+
+    if skip_patterns is None:
+        skip_patterns = [
+            "node_modules", ".git", "graphify-out", "dist", "build",
+            "playwright-report", "test-results", ".next", "coverage",
+        ]
+
+    try:
+        index = load_index(overarching_path, skip_patterns)
+        ranked = query_files(task, index, top_files)
+    except Exception:
+        ranked = []
+
+    with open(overarching_path) as f:
+        graph = json.load(f)
+    by_file = _symbols_by_file(graph)
+    selected = [rf.source_file for rf in ranked]
+
+    out_lines = [f"# Context for: {task}", ""]
+    if not selected:
+        out_lines.append(
+            "_No matching files. Try terms from the code itself (function or class names)._"
+        )
+        return "\n".join(out_lines) + "\n"
+
+    out_lines.append("## Open only these files")
+    for sf in selected:
+        syms = by_file.get(sf, [])
+        if syms:
+            shown = ", ".join(f"{label} {loc}".strip() for label, loc in syms[:12])
+            out_lines.append(f"- {sf} — {shown}")
+        else:
+            out_lines.append(f"- {sf}")
+
+    services = detect_services(root, MonoConfig().marker_files)
+    if services:
+        bridges = analyze_bridges(overarching_path, services)
+        sel_set = set(selected)
+        impact: list[str] = []
+        for svc in services:
+            for r in bridges[svc.name]:
+                local_full = f"{svc.name}/{r.local_file}"
+                if local_full in sel_set or r.remote_file in sel_set:
+                    impact.append(
+                        f"- {local_full}:{r.local_symbol} {r.local_loc} "
+                        f"--{r.relation}--> {r.remote_file}:{r.remote_symbol} {r.remote_loc}"
+                    )
+        if impact:
+            out_lines.append("")
+            out_lines.append("## Cross-service impact")
+            out_lines.extend(impact)
+
+    out_lines += [
+        "",
+        "## Next",
+        "Read only the `file:line` regions above. Before changing a symbol under "
+        'Cross-service impact, run `graphify affected "<symbol>"`. Then run the tests.',
+    ]
+
+    text = "\n".join(out_lines) + "\n"
+    char_budget = max(budget_tokens, 0) * 4
+    if char_budget and len(text) > char_budget:
+        text = text[:char_budget].rstrip() + "\n\n_(truncated to budget)_\n"
+    return text
 
 
 def _refresh(
@@ -396,6 +554,7 @@ def _refresh(
     bridges = analyze_bridges(overarching_graph_path, services)
     for svc in services:
         write_bridges_md(svc, bridges[svc.name])
+        write_symbols_md(svc)
     write_monorepo_map(root, services)
     write_copilot_instructions(root, services)
     return bridges

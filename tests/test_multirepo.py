@@ -18,8 +18,11 @@ from codex_graph.multirepo import (
     _load_env_file,
     _service_of,
     _stream_proc,
+    _write_managed_block,
     analyze_bridges,
+    build_context_pack,
     build_overarching_graph,
+    build_playbook_text,
     detect_services,
     partition_graph,
     run_extract,
@@ -28,6 +31,7 @@ from codex_graph.multirepo import (
     write_bridges_md,
     write_copilot_instructions,
     write_monorepo_map,
+    write_symbols_md,
 )
 from tests.conftest import make_mock_proc, write_graph
 
@@ -662,11 +666,17 @@ class TestWriteBridgesMd:
 
     def test_rows_written_as_table(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/g.json"))
-        rows = [BridgeRow("client.py", "Client", "calls", "svc-b", "svc-b/server.py", "Server")]
+        rows = [BridgeRow("client.py", "Client", "calls", "svc-b", "svc-b/server.py", "Server", "L10", "L42")]
         path = write_bridges_md(svc, rows)
         content = Path(path).read_text()
-        assert "| Local File | Symbol | Relation | → Service | Remote File | Remote Symbol |" in content
-        assert "| client.py | Client | calls | svc-b | svc-b/server.py | Server |" in content
+        assert "| Local File | Symbol | Loc | Relation | → Service | Remote File | Remote Symbol | Loc |" in content
+        assert "| client.py | Client | L10 | calls | svc-b | svc-b/server.py | Server | L42 |" in content
+
+    def test_includes_coding_hint(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/g.json"))
+        rows = [BridgeRow("client.py", "Client", "calls", "svc-b", "svc-b/server.py", "Server", "L10", "L42")]
+        content = Path(write_bridges_md(svc, rows)).read_text()
+        assert "graphify affected" in content
 
     def test_creates_graphify_out_directory(self, tmp_path):
         svc = ServiceInfo("svc-x", str(tmp_path / "svc-x"), str(tmp_path / "svc-x/g.json"))
@@ -797,10 +807,186 @@ class TestWriteCopilotInstructions:
         path = write_copilot_instructions(str(tmp_path), [svc])
         assert "MONOREPO_MAP.md" in Path(path).read_text()
 
-    def test_contains_how_to_use_section(self, tmp_path):
+    def test_directs_to_context_command(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
         path = write_copilot_instructions(str(tmp_path), [svc])
-        assert "## How to Use" in Path(path).read_text()
+        assert "codex-graph context" in Path(path).read_text()
+
+    def test_leads_with_skip_gate(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        path = write_copilot_instructions(str(tmp_path), [svc])
+        content = Path(path).read_text().lower()
+        assert "small" in content and "ignore the rest" in content
+
+    def test_also_writes_agents_md(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        write_copilot_instructions(str(tmp_path), [svc])
+        agents = tmp_path / "AGENTS.md"
+        assert agents.exists()
+        assert "codex-graph context" in agents.read_text()
+
+    def test_wrapped_in_managed_block(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        path = write_copilot_instructions(str(tmp_path), [svc])
+        content = Path(path).read_text()
+        assert "<!-- codex-graph:start -->" in content
+        assert "<!-- codex-graph:end -->" in content
+
+
+# ── _write_managed_block ─────────────────────────────────────────────────────
+
+class TestManagedBlock:
+    def test_creates_block_in_new_file(self, tmp_path):
+        p = str(tmp_path / "AGENTS.md")
+        _write_managed_block(p, "HELLO")
+        content = Path(p).read_text()
+        assert "<!-- codex-graph:start -->" in content
+        assert "HELLO" in content
+
+    def test_preserves_existing_user_content(self, tmp_path):
+        p = tmp_path / "AGENTS.md"
+        p.write_text("# My rules\nkeep me\n")
+        _write_managed_block(str(p), "BLOCK")
+        content = p.read_text()
+        assert "# My rules" in content
+        assert "keep me" in content
+        assert "BLOCK" in content
+
+    def test_replaces_only_block_on_rerun(self, tmp_path):
+        p = tmp_path / "AGENTS.md"
+        p.write_text("# My rules\nkeep me\n")
+        _write_managed_block(str(p), "FIRST")
+        _write_managed_block(str(p), "SECOND")
+        content = p.read_text()
+        assert "# My rules" in content
+        assert "keep me" in content
+        assert "SECOND" in content
+        assert "FIRST" not in content
+        assert content.count("<!-- codex-graph:start -->") == 1
+
+
+# ── build_playbook_text ──────────────────────────────────────────────────────
+
+class TestBuildPlaybookText:
+    def test_lists_services(self, tmp_path):
+        services = [
+            ServiceInfo("api", str(tmp_path / "api"), str(tmp_path / "api/graphify-out/graph.json")),
+            ServiceInfo("web", str(tmp_path / "web"), str(tmp_path / "web/graphify-out/graph.json")),
+        ]
+        text = build_playbook_text(str(tmp_path), services)
+        assert "api, web" in text
+
+    def test_single_project_label_when_no_services(self, tmp_path):
+        text = build_playbook_text(str(tmp_path), [])
+        assert "single project" in text
+
+    def test_is_compact(self, tmp_path):
+        text = build_playbook_text(str(tmp_path), [])
+        assert len(text.splitlines()) <= 20
+
+
+# ── write_symbols_md ─────────────────────────────────────────────────────────
+
+class TestWriteSymbolsMd:
+    def _service_with_graph(self, tmp_path, nodes):
+        svc = ServiceInfo("backend", str(tmp_path / "backend"), str(tmp_path / "backend" / "graphify-out" / "graph.json"))
+        write_graph(Path(svc.graph_path), nodes=nodes)
+        return svc
+
+    def test_groups_symbols_by_file_with_locations(self, tmp_path):
+        nodes = [
+            {"id": "f", "label": "coach.py", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L1"},
+            {"id": "g", "label": "generate_response()", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L40"},
+            {"id": "p", "label": "practice_critique()", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L88"},
+        ]
+        svc = self._service_with_graph(tmp_path, nodes)
+        path = write_symbols_md(svc)
+        content = Path(path).read_text()
+        assert "## coach.py" in content
+        assert "generate_response() — L40" in content
+        assert "practice_critique() — L88" in content
+
+    def test_excludes_file_node_itself(self, tmp_path):
+        nodes = [
+            {"id": "f", "label": "coach.py", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L1"},
+            {"id": "g", "label": "go()", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L5"},
+        ]
+        svc = self._service_with_graph(tmp_path, nodes)
+        content = Path(write_symbols_md(svc)).read_text()
+        assert "- coach.py" not in content
+        assert "go()" in content
+
+    def test_strips_service_prefix(self, tmp_path):
+        nodes = [{"id": "g", "label": "go()", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L5"}]
+        svc = self._service_with_graph(tmp_path, nodes)
+        content = Path(write_symbols_md(svc)).read_text()
+        assert "## coach.py" in content
+        assert "backend/coach.py" not in content
+
+    def test_empty_graph_message(self, tmp_path):
+        svc = self._service_with_graph(tmp_path, [])
+        content = Path(write_symbols_md(svc)).read_text()
+        assert "No code symbols" in content
+
+
+# ── build_context_pack ───────────────────────────────────────────────────────
+
+class TestBuildContextPack:
+    def _root_with_graph(self, tmp_path, nodes, links=None):
+        write_graph(tmp_path / "graphify-out" / "graph.json", nodes=nodes, links=links)
+
+    def test_missing_graph_returns_hint(self, tmp_path):
+        out = build_context_pack(str(tmp_path), "do something")
+        assert "No knowledge graph" in out
+
+    def test_ranks_relevant_file(self, tmp_path):
+        nodes = [
+            {"id": "c", "label": "coach generate response", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L40", "community": 0},
+            {"id": "u", "label": "user profile widget", "file_type": "code", "source_file": "frontend/user.tsx", "source_location": "L10", "community": 1},
+        ]
+        self._root_with_graph(tmp_path, nodes)
+        out = build_context_pack(str(tmp_path), "coach generate response", top_files=5)
+        assert "backend/coach.py" in out
+        assert "## Open only these files" in out
+
+    def test_includes_symbol_locations(self, tmp_path):
+        nodes = [
+            {"id": "c", "label": "generate response", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L40", "community": 0},
+        ]
+        self._root_with_graph(tmp_path, nodes)
+        out = build_context_pack(str(tmp_path), "generate response")
+        assert "L40" in out
+
+    def test_cross_service_impact_section(self, tmp_path):
+        (tmp_path / "backend").mkdir()
+        (tmp_path / "backend" / "pyproject.toml").touch()
+        (tmp_path / "eval").mkdir()
+        (tmp_path / "eval" / "pyproject.toml").touch()
+        nodes = [
+            {"id": "e", "label": "run prompts dataset", "file_type": "code", "source_file": "eval/run_eval.py", "source_location": "L78", "community": 0},
+            {"id": "c", "label": "generate response", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L40", "community": 1},
+        ]
+        links = [{"source": "e", "target": "c", "relation": "calls", "source_file": "eval/run_eval.py"}]
+        self._root_with_graph(tmp_path, nodes, links)
+        out = build_context_pack(str(tmp_path), "run prompts dataset generate response", top_files=5)
+        assert "Cross-service impact" in out
+        assert "eval/run_eval.py" in out and "backend/coach.py" in out
+
+    def test_no_match_message(self, tmp_path):
+        nodes = [{"id": "c", "label": "alpha beta", "file_type": "code", "source_file": "backend/coach.py", "source_location": "L40", "community": 0}]
+        self._root_with_graph(tmp_path, nodes)
+        out = build_context_pack(str(tmp_path), "zzzznomatch qqqqunknown")
+        assert "No matching files" in out
+
+    def test_budget_truncates(self, tmp_path):
+        nodes = [
+            {"id": f"n{i}", "label": f"handler number {i}", "file_type": "code",
+             "source_file": f"backend/file{i}.py", "source_location": f"L{i}", "community": 0}
+            for i in range(40)
+        ]
+        self._root_with_graph(tmp_path, nodes)
+        out = build_context_pack(str(tmp_path), "handler number", top_files=40, budget_tokens=20)
+        assert "truncated to budget" in out
 
 
 
@@ -889,8 +1075,10 @@ class TestRunMap:
                             lambda root, *a, **kw: _write_overarching(root) and 0 or 0)
         run_map(str(two_svc_root), MonoConfig())
         assert (two_svc_root / "svc-a" / "graphify-out" / "BRIDGES.md").exists()
+        assert (two_svc_root / "svc-a" / "graphify-out" / "SYMBOLS.md").exists()
         assert (two_svc_root / "graphify-out" / "MONOREPO_MAP.md").exists()
         assert (two_svc_root / ".github" / "copilot-instructions.md").exists()
+        assert (two_svc_root / "AGENTS.md").exists()
 
     def test_cross_service_bridge_detected_and_reported(self, two_svc_root, monkeypatch, capsys):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")

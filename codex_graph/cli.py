@@ -62,9 +62,45 @@ def _auto_map_if_needed(cfg_path: str | None) -> None:
     sys.exit(rc)
 
 
+def _run_context_command(argv: list[str]) -> None:
+    from codex_graph import multirepo
+
+    parser = argparse.ArgumentParser(
+        prog="codex-graph context",
+        description="Print a token-budgeted context pack (files + symbol locations + cross-service impact) for a coding task",
+    )
+    parser.add_argument("task", nargs="?", help="The coding task, in natural language")
+    parser.add_argument("--root", default=".", metavar="PATH", help="Repo root (default: current directory)")
+    parser.add_argument("--budget", type=int, default=None, metavar="N", help="Approx token budget for the pack")
+    parser.add_argument("--files", type=int, default=None, metavar="N", help="Max number of files to include")
+    parser.add_argument("--config", default=None, metavar="PATH", help="Path to config.toml")
+    args = parser.parse_args(argv)
+
+    task = args.task
+    if not task and not sys.stdin.isatty():
+        task = sys.stdin.read().strip()
+    if not task:
+        parser.print_help()
+        sys.exit(1)
+
+    cfg = load_config(args.config)
+    pack = multirepo.build_context_pack(
+        root=args.root,
+        task=task,
+        top_files=args.files if args.files is not None else cfg.mono.context_top_files,
+        budget_tokens=args.budget if args.budget is not None else cfg.mono.context_budget_tokens,
+        skip_patterns=cfg.graph.skip_patterns,
+    )
+    print(pack)
+    sys.exit(0)
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("map", "watch"):
         _run_mono_command(sys.argv[1], sys.argv[2:])
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "context":
+        _run_context_command(sys.argv[2:])
         return
 
     parser = argparse.ArgumentParser(
