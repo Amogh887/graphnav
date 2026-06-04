@@ -825,6 +825,13 @@ class TestWriteCopilotInstructions:
         assert agents.exists()
         assert "codex-graph context" in agents.read_text()
 
+    def test_also_writes_claude_md(self, tmp_path):
+        svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
+        write_copilot_instructions(str(tmp_path), [svc])
+        claude_md = tmp_path / "CLAUDE.md"
+        assert claude_md.exists()
+        assert "codex-graph context" in claude_md.read_text()
+
     def test_wrapped_in_managed_block(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
         path = write_copilot_instructions(str(tmp_path), [svc])

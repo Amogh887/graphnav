@@ -455,9 +455,9 @@ def _write_managed_block(path: str, content: str) -> None:
 def write_copilot_instructions(root: str, services: list[ServiceInfo]) -> str:
     content = build_playbook_text(root, services)
     copilot_path = os.path.join(root, ".github", "copilot-instructions.md")
-    agents_path = os.path.join(root, "AGENTS.md")
     _write_managed_block(copilot_path, content)
-    _write_managed_block(agents_path, content)
+    _write_managed_block(os.path.join(root, "AGENTS.md"), content)
+    _write_managed_block(os.path.join(root, "CLAUDE.md"), content)
     return copilot_path
 
 
