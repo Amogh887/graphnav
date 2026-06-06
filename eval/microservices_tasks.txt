@@ -1,0 +1,39 @@
+# Token-savings task suite for GoogleCloudPlatform/microservices-demo (Online Boutique).
+# Run with --root /Users/amogh/microservices-demo/src (per-service detection).
+# 15 coding + 5 explain + 10 irrelevant. CATEGORY markers tag the tasks that follow.
+
+# CATEGORY: coding
+add a discount_percent field to the product/price proto message and surface it on the frontend product page
+enforce a maximum quantity per item in the cart service when adding items, returning an error if exceeded
+add support for a new currency code to the currency service's conversion logic
+add middleware to the frontend that logs latency per backend gRPC call
+make the shipping service return free shipping when the order total exceeds a threshold
+add validation to the payment service that rejects expired credit cards by checking expiry month and year
+add a ListFeaturedProducts method to the product catalog service that returns a curated subset of products
+modify the recommendation service to exclude products already in the user's cart from recommendations
+add retry with exponential backoff to the frontend's gRPC call into the checkout service
+make the currency service's exchange-rate cache TTL configurable via an environment variable
+return a proper NOT_FOUND status from the product catalog service on a missing product id and surface a 404 in the frontend
+add an estimated delivery date field to the checkout order summary and propagate it to the frontend
+make the maximum number of recommendations returned configurable via an environment variable in the recommendation service
+reject empty product ids with INVALID_ARGUMENT in the product catalog GetProduct handler
+write a unit test for the currency service's money conversion logic
+
+# CATEGORY: explain
+how does the checkout service orchestrate calls to payment, shipping, and email?
+how are gRPC service contracts defined in the protos and shared across services?
+how does the cart service store items and how is its Redis backing configured?
+how does currency conversion work and which services call the currency service?
+how is tracing and OpenTelemetry instrumentation wired into the services?
+
+# CATEGORY: irrelevant
+where is the GraphQL schema federation configured across the services?
+how does the Kafka event bus deliver messages between services?
+where is user authentication and JWT login implemented in this app?
+how is the PostgreSQL database schema migrated and versioned?
+how does the Stripe webhook handler process refunds?
+how is the React and Redux store configured on the frontend?
+how does the WebSocket gateway broadcast real-time inventory updates?
+how is role-based access control enforced on admin endpoints?
+how does the Elasticsearch product search indexing pipeline work?
+how is server-side rendering hydration handled in the Next.js frontend?

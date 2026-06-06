@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -554,6 +555,106 @@ def build_context_pack(
     char_budget = max(budget_tokens, 0) * 4
     if char_budget and len(text) > char_budget:
         text = text[:char_budget].rstrip() + "\n\n_(truncated to budget)_\n"
+    return text
+
+
+def _extract_code_windows(abs_path, lines_wanted, before=2, after=14, max_lines=110):
+    try:
+        with open(abs_path, errors="replace") as f:
+            src = f.read().splitlines()
+    except OSError:
+        return ""
+    n = len(src)
+    keep = set()
+    for ln in lines_wanted:
+        if 1 <= ln <= n:
+            for i in range(max(1, ln - before), min(n, ln + after) + 1):
+                keep.add(i)
+    if not keep:
+        return ""
+    kept = sorted(keep)[:max_lines]
+    pieces = []
+    prev = None
+    for i in kept:
+        if prev is not None and i > prev + 1:
+            pieces.append("        ...")
+        pieces.append(f"{i:>5}  {src[i - 1]}")
+        prev = i
+    return "\n".join(pieces)
+
+
+def build_context_pack_inline(root, task, top_files=3, budget_tokens=2500, skip_patterns=None):
+    from codex_graph.graph_query import load_index, query_files
+
+    root = os.path.abspath(root)
+    overarching_path = _overarching_graph_path(root)
+    if not os.path.exists(overarching_path):
+        return f"# Context for: {task}\n\nNo knowledge graph found.\n"
+    if skip_patterns is None:
+        skip_patterns = [
+            "node_modules", ".git", "graphify-out", "dist", "build",
+            "playwright-report", "test-results", ".next", "coverage",
+        ]
+    try:
+        index = load_index(overarching_path, skip_patterns)
+        ranked = query_files(task, index, top_files)
+    except Exception:
+        ranked = []
+
+    with open(overarching_path) as f:
+        graph = json.load(f)
+    by_file = _symbols_by_file(graph)
+
+    out = [
+        f"# Context for: {task}",
+        "",
+        "## Relevant code (extracted from the knowledge graph — already in context, do not re-open these files)",
+    ]
+    if not ranked:
+        out.append("_No confident matches; explore normally._")
+        return "\n".join(out) + "\n"
+
+    for rf in ranked:
+        sf = rf.source_file
+        syms = by_file.get(sf, [])
+        line_nums = []
+        for _label, loc in syms:
+            m = re.search(r"L(\d+)", loc or "")
+            if m:
+                line_nums.append(int(m.group(1)))
+        snippet = _extract_code_windows(os.path.join(root, sf), line_nums)
+        out.append("")
+        out.append(f"### {sf}")
+        if syms:
+            out.append("symbols: " + ", ".join(label for label, _ in syms[:10]))
+        if snippet:
+            out.append("```")
+            out.append(snippet)
+            out.append("```")
+
+    from codex_graph.graph_nav import GraphNav
+
+    try:
+        nav = GraphNav(overarching_path, skip_patterns)
+        refs = nav.references_to([rf.source_file for rf in ranked], limit=12)
+    except Exception:
+        refs = []
+    if refs:
+        out.append("")
+        out.append("## Other code that references the above (likely also needs edits)")
+        out.extend("- " + r for r in refs)
+
+    out += [
+        "",
+        "## Next",
+        "The relevant code is shown above. Make the change directly; only open a file "
+        "if you need a region not shown. To explore further, use the graph tools "
+        "(graph_find, graph_neighbors) instead of broad searches.",
+    ]
+    text = "\n".join(out) + "\n"
+    char_budget = max(budget_tokens, 0) * 4
+    if char_budget and len(text) > char_budget:
+        text = text[:char_budget].rstrip() + "\n```\n\n_(truncated to budget)_\n"
     return text
 
 

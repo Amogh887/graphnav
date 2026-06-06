@@ -1,0 +1,193 @@
+[
+  {
+    "task": "add a per-user throttle limiting issue creation to 30 requests per minute and apply it to the issue create endpoint, mirroring the existing plane/throttles/asset.py pattern",
+    "category": "coding",
+    "context_pack_chars": 8025,
+    "baseline_reps": [
+      {
+        "condition": "baseline",
+        "total_input_tokens": 147146,
+        "total_output_tokens": 1662,
+        "total_tool_calls": 27,
+        "total_turns": 16,
+        "hit_turn_limit": true,
+        "turns": [
+          {
+            "input_tokens": 883,
+            "output_tokens": 103,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1144,
+            "output_tokens": 90,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1339,
+            "output_tokens": 96,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1700,
+            "output_tokens": 101,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 4678,
+            "output_tokens": 96,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 7241,
+            "output_tokens": 134,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 7856,
+            "output_tokens": 102,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 10231,
+            "output_tokens": 106,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 10571,
+            "output_tokens": 62,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 12812,
+            "output_tokens": 168,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 13047,
+            "output_tokens": 125,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 13239,
+            "output_tokens": 92,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 13512,
+            "output_tokens": 57,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 16081,
+            "output_tokens": 137,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 16232,
+            "output_tokens": 77,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 16580,
+            "output_tokens": 116,
+            "tool_calls": 1
+          }
+        ],
+        "final_answer": ""
+      }
+    ],
+    "treatment_reps": [
+      {
+        "condition": "treatment",
+        "total_input_tokens": 251781,
+        "total_output_tokens": 1746,
+        "total_tool_calls": 27,
+        "total_turns": 16,
+        "hit_turn_limit": true,
+        "turns": [
+          {
+            "input_tokens": 3821,
+            "output_tokens": 112,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 4791,
+            "output_tokens": 96,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 7354,
+            "output_tokens": 95,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 7667,
+            "output_tokens": 101,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 10051,
+            "output_tokens": 106,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 12389,
+            "output_tokens": 99,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 12965,
+            "output_tokens": 102,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 17797,
+            "output_tokens": 184,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 20441,
+            "output_tokens": 185,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 20987,
+            "output_tokens": 94,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 21155,
+            "output_tokens": 97,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 21360,
+            "output_tokens": 89,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 21463,
+            "output_tokens": 123,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 21641,
+            "output_tokens": 62,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 23882,
+            "output_tokens": 121,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 24017,
+            "output_tokens": 80,
+            "tool_calls": 1
+          }
+        ],
+        "final_answer": ""
+      }
+    ]
+  }
+]

@@ -1,0 +1,9 @@
+# Tasks for token savings measurement.
+# Point --root at a repo that has had `codex-graph map` run on it.
+# Replace these with questions relevant to that repo.
+
+where is authentication middleware defined and how is it applied to routes?
+how does the database connection pool get configured and what are the limits?
+how are background jobs scheduled and processed end to end?
+how is logging configured and where are log levels controlled?
+where is error handling centralized and how do errors propagate to the API response?

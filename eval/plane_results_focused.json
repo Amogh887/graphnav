@@ -1,0 +1,244 @@
+[
+  {
+    "task": "add an is_overdue boolean SerializerMethodField to the issue serializer that is true when target_date is in the past and the issue's state is not in the completed group",
+    "category": "coding",
+    "context_pack_chars": 8025,
+    "baseline_reps": [
+      {
+        "condition": "baseline",
+        "total_input_tokens": 79875,
+        "total_output_tokens": 1114,
+        "total_tool_calls": 16,
+        "total_turns": 12,
+        "hit_turn_limit": true,
+        "turns": [
+          {
+            "input_tokens": 882,
+            "output_tokens": 56,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 1043,
+            "output_tokens": 89,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1256,
+            "output_tokens": 94,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1611,
+            "output_tokens": 102,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 4993,
+            "output_tokens": 122,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 7814,
+            "output_tokens": 122,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 8026,
+            "output_tokens": 60,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 10151,
+            "output_tokens": 100,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 10265,
+            "output_tokens": 78,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 11111,
+            "output_tokens": 147,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 11272,
+            "output_tokens": 91,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 11451,
+            "output_tokens": 53,
+            "tool_calls": 1
+          }
+        ],
+        "final_answer": ""
+      }
+    ],
+    "treatment_reps": [
+      {
+        "condition": "treatment",
+        "total_input_tokens": 194910,
+        "total_output_tokens": 1549,
+        "total_tool_calls": 18,
+        "total_turns": 12,
+        "hit_turn_limit": true,
+        "turns": [
+          {
+            "input_tokens": 3813,
+            "output_tokens": 118,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 8277,
+            "output_tokens": 102,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 11747,
+            "output_tokens": 167,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 12127,
+            "output_tokens": 153,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 14636,
+            "output_tokens": 88,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 16877,
+            "output_tokens": 163,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 18659,
+            "output_tokens": 133,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 20251,
+            "output_tokens": 133,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 20854,
+            "output_tokens": 128,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 22394,
+            "output_tokens": 104,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 22512,
+            "output_tokens": 184,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 22763,
+            "output_tokens": 76,
+            "tool_calls": 1
+          }
+        ],
+        "final_answer": ""
+      }
+    ]
+  },
+  {
+    "task": "add \"priority\" to Issue.TRACKED_FIELDS so the ChangeTrackerMixin records priority changes, since it currently tracks only state_id",
+    "category": "coding",
+    "context_pack_chars": 8025,
+    "baseline_reps": [
+      {
+        "condition": "baseline",
+        "total_input_tokens": 14223,
+        "total_output_tokens": 812,
+        "total_tool_calls": 5,
+        "total_turns": 4,
+        "hit_turn_limit": false,
+        "turns": [
+          {
+            "input_tokens": 875,
+            "output_tokens": 111,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1491,
+            "output_tokens": 100,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 5835,
+            "output_tokens": 138,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 6022,
+            "output_tokens": 463,
+            "tool_calls": 0
+          }
+        ],
+        "final_answer": "The file is at `plane/db/models/issue.py` (relative to the repo root as `db/models/issue.py`). Here is the fix \u2014 a one-line change that adds `\"priority\"` to `Issue.TRACKED_FIELDS`:\n\n```diff\ndiff --git a/db/models/issue.py b/db/models/issue.py\n--- a/db/models/issue.py\n+++ b/db/models/issue.py\n@@ -102,7 +102,7 @@ class IssueManager(SoftDeletionManager):\n \n class Issue(ChangeTrackerMixin, ProjectBaseModel):\n-    TRACKED_FIELDS = [\"state_id\"]\n+    TRACKED_FIELDS = [\"state_id\", \"priority\"]\n \n     PRIORITY_CHOICES = (\n```\n\n---\n\n**What this does and why it's correct:**\n\n| Aspect | Detail |\n|---|---|\n| **Field being added** | `\"priority\"` \u2014 a plain `CharField` on `Issue` itself (not a FK), so its attname equals its field name; no `_id` suffix needed. |\n| **How `ChangeTrackerMixin` uses the list** | In `_track_fields()` it iterates `TRACKED_FIELDS` and calls `getattr(self, field)` for each name. After a `save()` it stores the changed names in `self._changes_on_save` and resets the baseline. Adding `\"priority\"` here means any write that changes the priority value will surface `\"priority\"` in `changed_fields` / `_changes_on_save`, exactly the same way `\"state_id\"` works today. |\n| **No other changes needed** | The mixin is fully generic; no signal, activity, or serialiser code needs touching to *detect* the change \u2014 those layers already consume `_changes_on_save` / `has_changed(\"priority\")` and will pick it up automatically. |"
+      }
+    ],
+    "treatment_reps": [
+      {
+        "condition": "treatment",
+        "total_input_tokens": 82795,
+        "total_output_tokens": 1455,
+        "total_tool_calls": 8,
+        "total_turns": 8,
+        "hit_turn_limit": false,
+        "turns": [
+          {
+            "input_tokens": 3839,
+            "output_tokens": 115,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 8198,
+            "output_tokens": 122,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 10615,
+            "output_tokens": 94,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 11070,
+            "output_tokens": 92,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 11239,
+            "output_tokens": 87,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 11340,
+            "output_tokens": 68,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 12069,
+            "output_tokens": 114,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 14425,
+            "output_tokens": 763,
+            "tool_calls": 0
+          }
+        ],
+        "final_answer": "I now have everything I need. The change is exactly one line in `db/models/issue.py`: add `\"priority\"` to `Issue.TRACKED_FIELDS`. \n\nHere's what's confirmed:\n- `ChangeTrackerMixin._track_fields()` reads `TRACKED_FIELDS` and snapshots the named attributes at `__init__` time.\n- `priority` is a plain `CharField` on `Issue` (not an FK), so it is accessed directly as `self.priority` \u2014 no `_id` suffix needed (unlike the FK `state`, which is stored as `state_id`).\n- `has_changed(\"priority\")` and `\"priority\" in changed_fields` will work correctly after this change.\n- No downstream code filters or allowlists the `changed_fields` list in a way that would silently ignore `\"priority\"`.\n\n```diff\ndiff --git a/db/models/issue.py b/db/models/issue.py\nindex a1b2c3d..e4f5g6h 100644\n--- a/db/models/issue.py\n+++ b/db/models/issue.py\n@@ -102,7 +102,7 @@ class IssueManager(SoftDeletionManager):\n \n class Issue(ChangeTrackerMixin, ProjectBaseModel):\n-    TRACKED_FIELDS = [\"state_id\"]\n+    TRACKED_FIELDS = [\"state_id\", \"priority\"]\n \n     PRIORITY_CHOICES = (\n```\n\nHere is the complete unified diff:\n\n```diff\ndiff --git a/db/models/issue.py b/db/models/issue.py\n--- a/db/models/issue.py\n+++ b/db/models/issue.py\n@@ -104,7 +104,7 @@ class IssueManager(SoftDeletionManager):\n \n class Issue(ChangeTrackerMixin, ProjectBaseModel):\n-    TRACKED_FIELDS = [\"state_id\"]\n+    TRACKED_FIELDS = [\"state_id\", \"priority\"]\n \n     PRIORITY_CHOICES = (\n```\n\n---\n\n**What changed and why:**\n\n| | Before | After |\n|---|---|---|\n| `TRACKED_FIELDS` | `[\"state_id\"]` | `[\"state_id\", \"priority\"]` |\n| `has_changed(\"priority\")` | always `False` | correctly `True` when priority is mutated |\n| `\"priority\" in issue.changed_fields` | never present | present whenever priority value differs from load-time value |\n| `issue._changes_on_save` | only carries `\"state_id\"` changes | also carries `\"priority\"` changes |\n\n**Why `\"priority\"` and not `\"priority_id\"`:** `priority` is a plain `CharField` (not a `ForeignKey`), so Django stores and exposes it directly as `self.priority`. FK fields use the `_id` suffix (hence `\"state_id\"` for the `state` FK). `ChangeTrackerMixin._track_fields()` calls `getattr(self, field)` on each name in `TRACKED_FIELDS`, so `\"priority\"` is the correct attribute name to use here."
+      }
+    ]
+  }
+]

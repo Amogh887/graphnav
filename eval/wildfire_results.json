@@ -1,0 +1,842 @@
+[
+  {
+    "task": "where is the fire risk prediction model implemented and how does it score risk?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 35093,
+      "total_output_tokens": 1444,
+      "total_tool_calls": 10,
+      "total_turns": 8,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 793,
+          "output_tokens": 120,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 1026,
+          "output_tokens": 71,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1153,
+          "output_tokens": 93,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 1368,
+          "output_tokens": 118,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 6955,
+          "output_tokens": 75,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 7057,
+          "output_tokens": 60,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 7940,
+          "output_tokens": 72,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 8801,
+          "output_tokens": 835,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Excellent! Now I have a complete picture. Let me provide a comprehensive answer:\n\n## Fire Risk Prediction Model Implementation\n\n### Location\nThe fire risk prediction model is implemented in **`backend/services/ml_service.py`** with model training logic in **`backend/training/train_model.py`**.\n\n### Model Overview\nThe system uses an **XGBoost classifier** trained to predict wildfire probability, with a fallback **physics-based scoring system** when the ML model is unavailable.\n\n### Risk Scoring Process\n\nThe scoring happens in `ml_service.py` through the `run_inference()` method with multiple steps:\n\n#### 1. **Base Probability Calculation**\nThe model computes probabilities using 8 features for each H3 hexagonal cell:\n- `temperature_max` - Maximum temperature\n- `relative_humidity_min` - Minimum relative humidity\n- `wind_speed_max` - Maximum wind speed\n- `precipitation_30d` - 30-day precipitation sum\n- `ndvi_proxy` - Vegetation greenness proxy (derived from precipitation + coastal proximity)\n- `fire_freq_historical` - Historical fire frequency (weighted distance to known fire-prone regions)\n- `month` - Current month (to account for fire season)\n- `drought_index` - Temperature divided by (precipitation + 1)\n\n#### 2. **ML vs Physics Scoring**\n```python\n# Uses max of ML prediction and physics-based score\nml_probs = self.model.predict_proba(X)[:, 1]\nbase_probs = [max(float(ml), phys) for ml, phys in zip(ml_probs, physics_probs)]\n```\n\n**Physics fallback score** combines:\n- Temperature component: 35% weight\n- Humidity component (dryness): 30% weight  \n- Wind component: 20% weight\n- Precipitation (lack thereof): 15% weight\n\n#### 3. **Normalization**\nProbabilities are normalized across the grid (subtracting min, dividing by span) to spread the distribution, with floor thresholding to zero out weak signals.\n\n#### 4. **Live Modifiers** \nThe probability is adjusted based on:\n- **Extreme weather**: If temp > 38\u00b0C AND humidity < 15% AND wind > 50 km/h \u2192 multiply by 1.8 (cap at 0.94 or 1.0 if fires present)\n- **Active fires**: \n  - 0 fires: cap probability at 0.94\n  - 1 fire: boost to at least 0.7\n  - 2+ fires: boost to at least 0.9\n\n#### 5. **Risk Banding**\nFinal probabilities are converted to categorical risk levels via the `risk_band()` function:\n- **LOW**: probability < 0.25\n- **MODERATE**: 0.25 \u2264 probability < 0.5\n- **HIGH**: 0.5 \u2264 probability < 0.75\n- **EXTREME**: probability \u2265 0.75\n\n### Data Sources\n- **Live weather**: Open-Meteo ERA5 archive (refreshed every 30 minutes)\n- **Active fires**: FIRMS (NASA) and AUS Fires services (refreshed every 60/30 minutes)\n- **Static fire frequency**: Hard-coded fire-prone region centers across Australia\n\n### Output\nResults are stored per H3 cell (resolution 4) containing: probability, risk band, raw score, temperature, humidity, wind speed, precipitation, active fire count, and coordinates."
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 8887,
+      "total_output_tokens": 873,
+      "total_tool_calls": 3,
+      "total_turns": 2,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 1337,
+          "output_tokens": 165,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 7550,
+          "output_tokens": 708,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Perfect! Now I have a comprehensive view of the fire risk prediction model. Let me provide you with a detailed answer.\n\n## Fire Risk Prediction Model Implementation\n\n### **Location**\nThe fire risk prediction model is implemented in **`backend/services/ml_service.py`**, with training logic in **`backend/training/train_model.py`**.\n\n---\n\n### **How Risk Scoring Works**\n\nThe model uses a **two-tier scoring approach**:\n\n#### **1. Base Probability Calculation** (Primary: ML Model \u2192 Fallback: Physics-Based)\n\n**ML Model Path** (preferred):\n- Loads a pre-trained **XGBoost classifier** from `wildfire_model.pkl`\n- Uses 8 features to predict wildfire probability (0-1):\n  - **Weather features**: temperature_max, relative_humidity_min, wind_speed_max, precipitation_30d\n  - **Static features**: ndvi_proxy (greenness), fire_freq_historical (regional fire density), month\n  - **Derived feature**: drought_index (temp / precipitation ratio)\n\n**Physics-Based Fallback** (if model unavailable):\n```python\nscore = 0.35 * temperature_normalized + 0.3 * humidity_dryness + 0.2 * wind_normalized + 0.15 * precipitation_deficit\n```\n\n#### **2. Live Modifiers** (Applied After Base Score)\n\nThe raw ML/physics probability is then adjusted for real-time conditions:\n\n| Condition | Adjustment |\n|-----------|------------|\n| **Extreme weather** (T>38\u00b0C, RH<15%, Wind>50 km/h) | Multiply by 1.8 (up to 0.94-1.0) |\n| **Active fires >= 2** | Boost probability to min 0.9 |\n| **Active fires == 1** | Boost probability to min 0.7 |\n| **No active fires** | Cap probability at 0.94 |\n\n#### **3. Risk Band Classification**\n\nThe final probability is converted to a risk category:\n```python\n< 0.25  \u2192 \"LOW\"\n< 0.5   \u2192 \"MODERATE\"\n< 0.75  \u2192 \"HIGH\"\n>= 0.75 \u2192 \"EXTREME\"\n```\n\n---\n\n### **Key Features**\n\n- **Historical fire frequency**: Weighted Gaussian function centered on 9 known fire-prone Australian regions (e.g., Sydney/Blue Mountains, Victorian highlands)\n- **NDVI proxy**: Simple greenness estimate based on precipitation + coastal proximity\n- **Live data integration**: Incorporates FIRMS active fires and local weather updates\n- **Resolution**: Runs inference on H3 hexagons at resolution 4 (coarse, ~thousands of hexes covering Australia)\n- **Fallback snapshot**: Saves results to disk so predictions persist if weather data is stale\n\nThe model is designed to be **spatially aware** (per-hexagon) and **temporally aware** (monthly seasonality, real-time weather/fires)."
+    },
+    "context_pack_chars": 1486
+  },
+  {
+    "task": "how does the FIRMS service fetch and cache active-fire detection data?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 27669,
+      "total_output_tokens": 1617,
+      "total_tool_calls": 11,
+      "total_turns": 7,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 793,
+          "output_tokens": 155,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 1578,
+          "output_tokens": 114,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 3641,
+          "output_tokens": 116,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 3837,
+          "output_tokens": 121,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 4834,
+          "output_tokens": 88,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 5165,
+          "output_tokens": 61,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 7821,
+          "output_tokens": 962,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Perfect! Now I have a comprehensive understanding. Let me create a summary document:\n\n## FIRMS Service: Data Fetching and Caching\n\nThe FIRMS (Fire Information for Resource Management System) service fetches and caches NASA's real-time active-fire detection data. Here's how it works:\n\n### **Architecture Overview**\n\nThe FIRMS service consists of a `FirmsCache` class that manages all fire detection data:\n\n```python\nclass FirmsCache:\n    self.fires_by_cell: dict[str, int] = {}      # res-4 H3 cell \u2192 fire count\n    self.updated_at: datetime | None = None       # last refresh timestamp\n    self.enabled: bool = False                    # is service active?\n```\n\n### **Data Fetching Process**\n\n**1. Configuration & Initialization**\n- Requires `NASA_FIRMS_MAP_KEY` environment variable (API key from NASA)\n- If the key is not set, the service gracefully disables with 0 hotspots\n- Can optionally run in demo mode (`FIRMS_DEMO=1`) with seeded test data\n\n**2. API Request**\nWhen enabled with a valid key, the service makes a request to NASA's FIRMS API:\n```python\nurl = f\"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{SENSOR}/{BBOX}/{DAYS}\"\n# SENSOR = \"VIIRS_SNPP_NRT\" (NOAA satellite)\n# BBOX = \"112,-44,154,-10\" (Australia bounds: west,south,east,north)\n# DAYS = 1 (last 1 day of data)\n```\n\n**3. Data Processing**\n- Downloads CSV format with latitude/longitude of hotspots\n- For each fire detection point, converts the lat/lon coordinates to an **H3 hexagonal grid cell** at resolution 4 (coarse grid)\n- Aggregates by counting fires per cell: `counts[cell] += 1`\n- Stores the aggregated results in the cache\n\n### **Caching Strategy**\n\n**In-Memory Cache:**\n- `fires_by_cell`: Dictionary mapping H3 cell IDs (res-4) to fire counts\n- Covers the entire Australia region\n- Lightweight and fast for lookup\n\n**Lookup Method:**\n```python\ndef fires_for_cell(self, cell: str) -> int:\n    # Works for any H3 resolution\n    # Converts the query cell to its res-4 parent, then looks up fires\n    ccell = cell if res == RES_COARSE else h3.cell_to_parent(cell, RES_COARSE)\n    return self.fires_by_cell.get(ccell, 0)\n```\n\n### **Refresh Schedule**\n\nThe cache is refreshed **every 60 minutes** via a background scheduler:\n\n```python\nscheduler.add_job(refresh_firms, \"interval\", minutes=60, id=\"firms\")\n```\n\nWhen refreshed:\n1. Fetches the latest NASA FIRMS data\n2. Re-processes and re-aggregates hotspots\n3. Triggers ML model re-inference using the updated fire data\n4. Handles failures gracefully with logging\n\n### **Integration with Wildfire Prediction**\n\nThe active fire data influences the final wildfire probability in the ML service:\n\n```python\nfires = firms_service.cache.fires_for_cell(c) + aus_fires_service.cache.fires_for_cell(c)\n\nif fires >= 2:\n    prob = max(prob, 0.9)      # High certainty if 2+ fires\nelif fires == 1:\n    prob = max(prob, 0.7)      # Moderate boost for 1 fire\nif fires == 0:\n    prob = min(prob, 0.94)     # Cap probability if no active fires\n```\n\n**Summary:** The FIRMS service provides real-time fire hotspot detection via NASA's API, aggregates them into a coarse H3 grid for fast lookup, caches the results in memory, and refreshes every hour to keep predictions current."
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 7529,
+      "total_output_tokens": 825,
+      "total_tool_calls": 2,
+      "total_turns": 3,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 1416,
+          "output_tokens": 85,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 2622,
+          "output_tokens": 80,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 3491,
+          "output_tokens": 660,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Perfect! Now I have a complete understanding. Let me provide a comprehensive answer:\n\n## How the FIRMS Service Fetches and Caches Active-Fire Detection Data\n\n### **Architecture Overview**\n\nThe FIRMS (Fire Information for Resource Management System) service is implemented via the `FirmsCache` class in `backend/services/firms_service.py` and is scheduled for periodic updates in `backend/main.py`.\n\n### **Data Fetching Process**\n\n**1. API Connection**\n- Uses NASA's FIRMS API endpoint: `https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{SENSOR}/{BBOX}/{DAYS}`\n- Requires `NASA_FIRMS_MAP_KEY` environment variable for authentication\n- Fetches VIIRS_SNPP_NRT (Visible Infrared Imaging Radiometer Suite Near Real-Time) sensor data\n- Covers Australian bounding box: `112,-44,154,-10` (west, south, east, north)\n- Retrieves data for the last **1 day** (configurable via `DAYS`)\n\n**2. Data Processing**\n- Downloads CSV format response via `requests.get(url, timeout=60)`\n- Parses CSV using pandas to extract latitude/longitude columns\n- Converts each fire hotspot coordinate to an **H3 hexagonal cell** at resolution 4 (`RES_COARSE`)\n- Aggregates fire counts by cell: multiple hotspots in the same cell are summed\n\n### **Caching Strategy**\n\nThe cache maintains two key attributes:\n- **`fires_by_cell`**: Dictionary mapping H3 cell IDs (res-4) to fire count integers\n- **`updated_at`**: Timestamp of last successful refresh\n\n### **Cache Retrieval**\n\nThe `fires_for_cell()` method retrieves fire counts for any H3 resolution:\n- Takes a cell at any H3 resolution\n- Automatically converts it to its res-4 parent cell\n- Returns the aggregated fire count from the cache (0 if not found)\n\n### **Fallback & Demo Mode**\n\nWhen the API key is unavailable:\n- If `FIRMS_DEMO=1` environment variable is set, seeds 9 realistic fire-prone demo locations\n- Otherwise returns 0 hotspots (service remains functional without real data)\n\n### **Scheduling**\n\nFrom `main.py`:\n- **Refresh frequency**: Every **60 minutes**\n- **Error handling**: Exceptions are logged; cache updated with timestamp even on failure\n- **Post-refresh action**: Triggers ML inference (`ml.run_inference()`) to update risk predictions\n- **Startup behavior**: Initial load happens in background thread to avoid blocking startup\n\nThis design allows real-time fire detection data to inform the wildfire risk prediction model while gracefully degrading when NASA FIRMS API is unavailable."
+    },
+    "context_pack_chars": 1679
+  },
+  {
+    "task": "how does the weather service compute climate normals for a grid cell?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 11311,
+      "total_output_tokens": 905,
+      "total_tool_calls": 6,
+      "total_turns": 4,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 792,
+          "output_tokens": 159,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 1091,
+          "output_tokens": 103,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 3557,
+          "output_tokens": 78,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 5871,
+          "output_tokens": 565,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Perfect! Now I have the complete picture. Let me explain how the weather service computes climate normals for grid cells:\n\n## How Climate Normals are Computed for Grid Cells\n\nThe weather service uses a **lookup-based approach** with latitude-band interpolation and special handling for interior Australia:\n\n### 1. **Latitude Band Classification**\nThe system divides Australia into 4 latitude bands:\n- **Band 0 (Tropical)**: latitude > -20\u00b0\n- **Band 1 (Subtropical)**: -20\u00b0 to -30\u00b0\n- **Band 2 (Temperate)**: -30\u00b0 to -37\u00b0\n- **Band 3 (Southern)**: latitude < -37\u00b0\n\n### 2. **Monthly Lookup Tables**\nEach band has pre-computed monthly climate normals (indexed by month) for four variables:\n- `_TEMP_MAX`: Maximum temperature\n- `_HUM_MIN`: Minimum humidity\n- `_WIND_MAX`: Maximum wind speed\n- `_PRECIP_30D`: 30-day precipitation\n\n### 3. **Interior Australia Adjustment**\nFor cells in the Outback region (-33\u00b0 < lat < -18\u00b0, 125\u00b0 < lon < 142\u00b0), the system applies adjustments to account for the drier, hotter interior:\n\n```python\ninterior = min(1.0, min(lon - 115, 145 - lon) / 15.0)  # Distance factor\ntemp_max += interior * 7                                 # Add up to 7\u00b0C\nhum_min = max(5.0, hum_min - interior * 15)             # Reduce by up to 15%\np30 = max(1.0, p30 * (1 - interior * 0.6))              # Reduce by up to 60%\n```\n\n### 4. **Derived Values**\nFrom the base values, the system calculates derived weather metrics:\n- `temperature`: max temperature - 4\u00b0C (average)\n- `humidity`: min humidity scaled by 1/0.65 factor\n- `wind_speed`: max wind speed \u00d7 0.7 (average)\n- `precipitation`: 30-day total \u00f7 30 (daily average)\n\nAll values are rounded to 1-2 decimal places. If live API data is available from WeatherAPI.com, it's used instead; otherwise, this climate normal function is the fallback."
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 5146,
+      "total_output_tokens": 592,
+      "total_tool_calls": 1,
+      "total_turns": 2,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 1414,
+          "output_tokens": 82,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 3732,
+          "output_tokens": 510,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Based on the code, here's how the weather service computes climate normals for a grid cell:\n\n## Climate Normals Computation\n\nThe process uses the `_climate_normal(lat, lon, month)` function which works as follows:\n\n### 1. **Latitude Band Classification**\nThe function first determines which of 4 latitudinal bands the cell belongs to using `_lat_band(lat)`:\n- **Band 0 (Tropical)**: latitude > -20\u00b0\n- **Band 1 (Subtropical)**: -20\u00b0 to -30\u00b0\n- **Band 2 (Temperate)**: -30\u00b0 to -37\u00b0\n- **Band 3 (Southern)**: latitude < -37\u00b0\n\n### 2. **Month-Based Lookup**\nFor the current month, it looks up pre-computed climate normal tables by band and month (0-indexed):\n- `_TEMP_MAX[band][month-1]` - maximum temperature\n- `_HUM_MIN[band][month-1]` - minimum humidity\n- `_WIND_MAX[band][month-1]` - maximum wind\n- `_PRECIP_30D[band][month-1]` - 30-day precipitation\n\n### 3. **Interior (Outback) Adjustment**\nIf the cell is in the Australian interior/Outback region (-33\u00b0 < lat < -18\u00b0, 125\u00b0 < lon < 142\u00b0), adjustments are applied based on distance from coast:\n- **Temperature**: increases by up to 7\u00b0C\n- **Humidity**: decreases by up to 15% RH\n- **Precipitation**: decreases by up to 60%\n\n### 4. **Final Normalization**\nThe raw climate values are then converted to actual weather metrics:\n- Temperature (avg) = max_temp - 4.0\u00b0C\n- Humidity (avg) = min_humidity / 0.65\n- Wind speed (avg) = max_wind * 0.7\n- Precipitation (daily) = 30-day total / 30\n\nThe function returns a dictionary with both raw and normalized values (e.g., `temperature`, `temperature_max`, `humidity`, `humidity_min`, etc.)."
+    },
+    "context_pack_chars": 1678
+  },
+  {
+    "task": "how are the Australian fire feeds for NSW and VIC fetched and merged?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 55409,
+      "total_output_tokens": 1756,
+      "total_tool_calls": 15,
+      "total_turns": 10,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 794,
+          "output_tokens": 157,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 1091,
+          "output_tokens": 101,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 3334,
+          "output_tokens": 119,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 3567,
+          "output_tokens": 75,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 4728,
+          "output_tokens": 134,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 4942,
+          "output_tokens": 114,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 6707,
+          "output_tokens": 80,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 8387,
+          "output_tokens": 84,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 9592,
+          "output_tokens": 80,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 12267,
+          "output_tokens": 812,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Perfect! Now I have a complete picture. Let me create a comprehensive summary.\n\n## Summary: Australian Fire Feeds for NSW and VIC\n\nThe Australian fire feeds for NSW and VIC are fetched and merged through a two-source aggregation system in the backend. Here's how it works:\n\n### **Data Sources**\n\n1. **NSW RFS (Rural Fire Service)**\n   - URL: `https://www.rfs.nsw.gov.au/feeds/majorIncidents.json`\n   - Format: GeoJSON\n   - Filtering: Extracts features where `category` contains \"fire\"\n\n2. **VIC Emergency**\n   - URL: `https://emergency.vic.gov.au/public/osom-geojson.json`\n   - Format: GeoJSON\n   - Filtering: Extracts features where `category1` equals \"fire\"\n\n### **Fetch & Processing (`aus_fires_service.py`)**\n\nThe `AusFiresCache` class handles both feeds independently:\n\n```python\ndef refresh(self):\n    counts: dict[str, int] = {}  # cell \u2192 fire count\n    \n    for feed_name, fetch_fn in [(\"NSW RFS\", self._fetch_nsw), (\"VIC Emergency\", self._fetch_vic)]:\n        points = fetch_fn()  # Extract (lat, lon) tuples for fire incidents\n        for lat, lon in points:\n            cell = h3.latlng_to_cell(lat, lon, RES_COARSE)  # Map to H3 res-4 grid\n            counts[cell] = counts.get(cell, 0) + 1  # Increment fire count per cell\n```\n\n**Key steps:**\n- Each feed is fetched independently via HTTP\n- Point geometries are extracted from GeoJSON features\n- Coordinates are converted to **H3 hexagonal grid cells** at resolution 4 (RES_COARSE = 3, actually used is RES_COARSE from `hex_service.py`)\n- Fire counts are **aggregated by cell** across both sources\n\n### **Merge Strategy**\n\nThe two feeds are **merged at the H3 cell level**:\n- Both NSW and VIC incidents are mapped to H3 cells independently\n- Incident counts from both sources **accumulate in the same dictionary**\n- A single H3 cell can contain fires from both NSW and VIC (if they're close enough)\n\n### **Integration with ML Inference (`ml_service.py`)**\n\nThe merged fire data is combined with other risk factors:\n\n```python\nfires = firms_service.cache.fires_for_cell(c) + aus_fires_service.cache.fires_for_cell(c)\n```\n\nThis sums fires from **three sources**:\n- **FIRMS** (NASA satellite hotspots)\n- **NSW RFS** (government feed)\n- **VIC Emergency** (government feed)\n\nThe combined fire count then **modifies the wildfire probability** based on rules like:\n- `fires >= 2`: probability \u2265 0.9\n- `fires == 1`: probability \u2265 0.7\n- `fires == 0`: probability \u2264 0.94\n\n### **Refresh Schedule (`main.py`)**\n\n```python\nscheduler.add_job(refresh_aus_fires, \"interval\", minutes=30, id=\"aus_fires\")\n```\n\nThe Australian fire feeds are refreshed **every 30 minutes**, triggering new ML inference after each update."
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 4001,
+      "total_output_tokens": 633,
+      "total_tool_calls": 1,
+      "total_turns": 2,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 1414,
+          "output_tokens": 87,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 2587,
+          "output_tokens": 546,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Perfect! I can now explain how the Australian fire feeds for NSW and VIC are fetched and merged:\n\n## How Australian Fire Feeds are Fetched and Merged\n\nThe `AusFiresCache` class in `backend/services/aus_fires_service.py` handles this process:\n\n### **1. Fetching NSW RFS Fires** (`_fetch_nsw()`)\n- Fetches data from: `https://www.rfs.nsw.gov.au/feeds/majorIncidents.json`\n- Parses the GeoJSON features and filters for incidents where the `category` field contains \"fire\" (case-insensitive)\n- Extracts Point geometry coordinates and converts them to `(lat, lon)` tuples\n- Returns a list of fire location coordinates\n\n### **2. Fetching VIC Emergency Fires** (`_fetch_vic()`)\n- Fetches data from: `https://emergency.vic.gov.au/public/osom-geojson.json`\n- Parses the GeoJSON features and filters for incidents where `category1` equals \"fire\" (case-insensitive)\n- Extracts Point geometry coordinates and converts them to `(lat, lon)` tuples\n- Returns a list of fire location coordinates\n\n### **3. Merging** (`refresh()`)\nThe refresh process unifies both feeds:\n1. **Loops through both feeds** via `[(\"NSW RFS\", self._fetch_nsw), (\"VIC Emergency\", self._fetch_vic)]`\n2. **Maps coordinates to H3 cells**: Each `(lat, lon)` point is converted to an H3 hexagonal cell at resolution 4 (RES_COARSE)\n3. **Aggregates incident counts**: Maintains a `counts` dictionary that increments cell counters when multiple incidents fall in the same cell\n4. **Stores merged result**: Saves the unified `fires_by_cell` dictionary mapping cell IDs to incident counts\n5. **Logs statistics**: Reports incidents per feed and total affected cells\n\n### **4. Querying** (`fires_for_cell()`)\n- Accepts any H3 resolution cell and normalizes it to resolution 4\n- Returns the incident count for that coarse cell from the merged data\n\nThis approach treats both feeds uniformly and maintains compatibility with the `FirmsCache` interface used for satellite fire data."
+    },
+    "context_pack_chars": 1669
+  },
+  {
+    "task": "how is the ML model trained and what input features does it use?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 16547,
+      "total_output_tokens": 1419,
+      "total_tool_calls": 7,
+      "total_turns": 5,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 792,
+          "output_tokens": 73,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 925,
+          "output_tokens": 103,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 2929,
+          "output_tokens": 106,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 3157,
+          "output_tokens": 118,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 8744,
+          "output_tokens": 1019,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Perfect! I have all the information needed. Let me provide a comprehensive answer about the ML model training and input features.\n\n## ML Model Training and Input Features\n\n### **Model Type and Training Data**\n\nThe system uses an **XGBoost classifier** trained on **184,000 historical fire events** aggregated to H3 hexagonal cells (resolution 6). The training process has three fallback paths:\n\n1. **Preferred**: Kaggle dataset (`carlosparadis/fires-from-space-australia-and-new-zeland`) + real ERA5 weather data\n2. **Fallback**: Kaggle dataset with synthetic weather features\n3. **Fallback**: Fully synthetic but realistic fire/non-fire samples weighted toward known fire-prone regions\n\n---\n\n### **Input Features (8 total)**\n\nThe model uses these features, which must match across training and inference:\n\n| Feature | Description | Source/Derivation |\n|---------|-------------|-------------------|\n| `temperature_max` | Maximum temperature in past 24h | Live weather API (WeatherAPI.com) |\n| `relative_humidity_min` | Lowest humidity in past 24h | Live weather API |\n| `wind_speed_max` | Peak wind speed | Live weather API |\n| `precipitation_30d` | 30-day rolling rainfall sum | Live weather API |\n| `ndvi_proxy` | Vegetation density/greenness proxy | Derived: `0.3 + min(precip_30d, 100) / 250.0`, clipped 0.05\u20130.9 |\n| `fire_freq_historical` | Static fire frequency from known regions | Gaussian decay from 9 pre-defined fire-prone region centers weighted by proximity |\n| `month` | Seasonal signal (1-12) | Current UTC month; fire season (Nov-Mar) boosted during training |\n| `drought_index` | Temperature/precipitation deficit | Derived: `temperature_max / (precipitation_30d + 1.0)` |\n\n---\n\n### **Data Processing**\n\n- **Aggregation**: Fire points from satellite detections are aggregated to H3 resolution-6 cells (~3,000 km\u00b2)\n- **Negative sampling**: Random cells over Australia not containing fires\n- **Feature synthesis**: For training, weather features are synthetically generated with **fire-prone regions biased hot/dry/windy** and negative samples biased cooler/wetter\n- **Regional weighting**: Fire-prone zones (Sydney, Victoria, ACT, etc.) get higher positive class weight during training\n\n---\n\n### **Inference Pipeline**\n\n1. **Weather fetching**: Live weather aggregated to H3 resolution-2 cells (~90 cells across Australia, updated every 30 min)\n2. **Feature extraction**: For each of ~620 hexagons (res-3), compute all 8 features using live weather + month + static geographic data\n3. **ML prediction**: XGBoost outputs probability (0\u20131)\n4. **Physics blending**: Max of XGBoost probability vs. physics-based fallback score if model unavailable\n5. **Min-max normalization**: Rescale probabilities across all cells for geographic contrast\n6. **Live modifiers applied post-inference**:\n   - **Extreme weather** (temp > 38\u00b0C AND humidity < 15% AND wind > 50 km/h) \u2192 multiply by 1.8\n   - **Active satellite fire** (\u22652 hotspots) \u2192 floor at 0.9\n   - **Active satellite fire** (1 hotspot) \u2192 floor at 0.7\n   - **No fire detected** \u2192 hard cap at 0.94 (prevent false extremes)\n\n---\n\n### **Physics-Based Fallback**\n\nIf the XGBoost model is unavailable, a simple physics formula is used:\n\n```\nscore = 0.35 \u00d7 normalized_temp + 0.3 \u00d7 normalized_dryness \n      + 0.2 \u00d7 normalized_wind + 0.15 \u00d7 normalized_no_rain\n```\n\n---\n\n### **Model Storage**\n\nThe trained model is serialized as a pickle file at `backend/data/wildfire_model.pkl` containing:\n- The fitted XGBoost model object\n- Feature column names\n- Metadata (source, version)\n\nInference results are also cached in an `inference_snapshot.pkl` for fallback if the backend goes offline."
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 187132,
+      "total_output_tokens": 1376,
+      "total_tool_calls": 17,
+      "total_turns": 15,
+      "hit_turn_limit": true,
+      "turns": [
+        {
+          "input_tokens": 1414,
+          "output_tokens": 170,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 8872,
+          "output_tokens": 103,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 11785,
+          "output_tokens": 112,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 11911,
+          "output_tokens": 100,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 12025,
+          "output_tokens": 55,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 12102,
+          "output_tokens": 96,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 12212,
+          "output_tokens": 96,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 12322,
+          "output_tokens": 102,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 12597,
+          "output_tokens": 89,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 12700,
+          "output_tokens": 76,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 15611,
+          "output_tokens": 114,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 15739,
+          "output_tokens": 68,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 15845,
+          "output_tokens": 85,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 15944,
+          "output_tokens": 53,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 16053,
+          "output_tokens": 57,
+          "tool_calls": 1
+        }
+      ],
+      "final_answer": ""
+    },
+    "context_pack_chars": 1673
+  },
+  {
+    "task": "how is user authentication and JWT login handled in this app?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 21138,
+      "total_output_tokens": 1085,
+      "total_tool_calls": 12,
+      "total_turns": 8,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 790,
+          "output_tokens": 69,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 919,
+          "output_tokens": 66,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1041,
+          "output_tokens": 134,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 2104,
+          "output_tokens": 69,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 2996,
+          "output_tokens": 104,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 3261,
+          "output_tokens": 97,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 4023,
+          "output_tokens": 93,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 6004,
+          "output_tokens": 453,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Based on my exploration of the codebase, here's what I found:\n\n## Authentication & JWT Status\n\n**This app does NOT implement user authentication or JWT login.** The application is a **public, read-only service** with no user accounts or login functionality.\n\n### Key findings:\n\n1. **No authentication code**: There are no references to JWT, login, tokens, or authentication middleware anywhere in the codebase.\n\n2. **CORS is wide open**: The backend explicitly allows all origins:\n   ```python\n   app.add_middleware(\n       CORSMiddleware,\n       allow_origins=[\"*\"],  # Allow all origins\n       allow_credentials=True,\n       allow_methods=[\"*\"],\n       allow_headers=[\"*\"],\n   )\n   ```\n\n3. **All endpoints are public**: The API exposes three public endpoints:\n   - `GET /api/hexagons?resolution={4|6}` \u2014 All hexes with risk scores\n   - `GET /api/hex/{h3id}` \u2014 Single hex detail\n   - `GET /api/status` \u2014 Data freshness + alert counts\n   - `GET /api/alerts` \u2014 High-risk cells\n   - `GET /api/boundary` \u2014 Australia map boundary\n\n4. **No user-specific data**: There's no concept of user profiles, permissions, roles, or protected resources.\n\n### Architecture:\n- **Frontend**: React/TypeScript app that reads from the public API\n- **Backend**: FastAPI serving wildfire risk data updated every 30-60 minutes\n- **Data sources**: Public APIs (NASA FIRMS, WeatherAPI.com, Australian DEA Hotspots)\n\nThe app is designed as a **public intelligence platform** where anyone can view real-time Australia wildfire risk predictions via the interactive map. If you need to add authentication in the future, you'd need to implement FastAPI's security utilities (e.g., `HTTPBearer`, `HTTPBasic`, or OAuth2) along with a database for user management."
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 4957,
+      "total_output_tokens": 666,
+      "total_tool_calls": 5,
+      "total_turns": 2,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 1260,
+          "output_tokens": 285,
+          "tool_calls": 5
+        },
+        {
+          "input_tokens": 3697,
+          "output_tokens": 381,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Based on my examination of the code, **this application does NOT implement user authentication or JWT login**. Here's what I found:\n\n## Authentication Status: \u274c None Implemented\n\n### Key Findings:\n\n1. **Backend (FastAPI) - `backend/main.py`:**\n   - No authentication routes or middleware\n   - CORS is configured to allow all origins: `allow_origins=[\"*\"]`\n   - No JWT tokens, password verification, or user management\n   - All endpoints are publicly accessible\n   - The single route is just a simple health check: `GET /` returns service info\n\n2. **Frontend (React) - `frontend/src/App.tsx`:**\n   - No login/signup forms or authentication UI\n   - No JWT storage (localStorage, sessionStorage, etc.)\n   - No auth state management\n   - Direct API calls without authorization headers\n   - The app connects directly to the backend without any credentials\n\n3. **E2E Tests - `frontend/e2e/app.spec.ts`:**\n   - No authentication tests\n   - Tests navigate directly to \"/\" without login\n\n4. **Search Results:**\n   - No matches for \"JWT\", \"auth\", \"login\", \"token\", or \"password\" anywhere in the codebase\n\n## Architecture:\nThis is a **public-facing wildfire prediction application** that appears designed for open access. The backend services (weather, FIRMS fires, Australian fires) all fetch and serve data without user-specific access control. Data flows directly from external APIs \u2192 backend cache \u2192 frontend visualization, with no authentication layer.\n\nIf you need to add authentication, you would need to implement JWT tokens, user credentials, protected routes, and appropriate middleware in both backend and frontend."
+    },
+    "context_pack_chars": 1264
+  },
+  {
+    "task": "how does the Stripe payment integration process subscriptions?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 28684,
+      "total_output_tokens": 1055,
+      "total_tool_calls": 15,
+      "total_turns": 7,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 789,
+          "output_tokens": 146,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 2661,
+          "output_tokens": 174,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 2971,
+          "output_tokens": 144,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 4044,
+          "output_tokens": 123,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 5043,
+          "output_tokens": 121,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 5325,
+          "output_tokens": 115,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 7851,
+          "output_tokens": 232,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Based on my thorough exploration of the repository, **there is no Stripe payment integration or subscription processing in this codebase**. \n\nThis repository is **Pyroscope**, an Australia wildfire risk prediction platform. It's a specialized application focused on:\n\n- **Real-time wildfire risk analysis** using machine learning\n- **Live weather and satellite fire data** integration\n- **Interactive hexagonal mapping** of risk scores across Australia\n\nThe entire tech stack consists of:\n- **Backend**: FastAPI with Python (ML inference, data fetching, scheduling)\n- **Frontend**: React + TypeScript with deck.gl mapping\n- **Data sources**: NASA FIRMS, Australian DEA hotspots, WeatherAPI\n\nThere are no payment-related features, Stripe integration, or subscription processing mechanisms in the codebase. The platform appears to be a public-facing risk intelligence tool rather than a commercial product with subscription tiers.\n\nIf you were looking for information about Stripe integrations in a different project, please let me know and I can help you explore that instead!"
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 13355,
+      "total_output_tokens": 709,
+      "total_tool_calls": 7,
+      "total_turns": 8,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 1231,
+          "output_tokens": 78,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1323,
+          "output_tokens": 66,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1403,
+          "output_tokens": 66,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1529,
+          "output_tokens": 53,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1638,
+          "output_tokens": 56,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1721,
+          "output_tokens": 74,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1809,
+          "output_tokens": 69,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 2701,
+          "output_tokens": 247,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Based on my search of the repository, **there is no Stripe payment integration in this codebase**. \n\nThe repository appears to be a fire risk monitoring and prediction system with the following components:\n\n- **Backend Services**: ML-based fire risk predictions, weather data, fire detection (FIRMS), Australian fire data\n- **API Endpoints**: Hexagon grids for geographic risk data, alerts, status monitoring, and boundary data\n- **Frontend**: Not yet explored, but likely visualizes the fire risk data\n\nThe code focuses entirely on:\n- Machine learning inference for fire risk\n- Weather data integration\n- Fire detection and monitoring\n- Geographic grid systems (H3)\n\n**There is no payment processing, subscription management, or Stripe integration** in the current codebase. If Stripe integration is needed, it would need to be implemented separately, typically involving:\n- Creating new API endpoints for subscription management\n- Adding a payment service module\n- Integrating Stripe webhooks for subscription events\n- Managing customer billing data\n\nIs it possible you were asking about a different project, or would you like help implementing Stripe payments for this application?"
+    },
+    "context_pack_chars": 1201
+  },
+  {
+    "task": "where is the GraphQL schema defined and how are resolvers wired up?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 19111,
+      "total_output_tokens": 1009,
+      "total_tool_calls": 10,
+      "total_turns": 8,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 794,
+          "output_tokens": 139,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 1046,
+          "output_tokens": 71,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1173,
+          "output_tokens": 57,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 2019,
+          "output_tokens": 66,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 2112,
+          "output_tokens": 60,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 2995,
+          "output_tokens": 167,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 3229,
+          "output_tokens": 103,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 5743,
+          "output_tokens": 346,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "## Summary\n\n**This repository does NOT use GraphQL.** It uses a **REST API** built with **FastAPI** (Python backend).\n\n### API Structure:\n\n**The GraphQL schema and resolvers don't exist here.** Instead:\n\n1. **Backend Framework**: FastAPI (Python)\n   - Located in: `backend/main.py` and `backend/routers/api.py`\n   - No GraphQL query language or resolver pattern\n\n2. **API Endpoints** (REST-based):\n   - `GET /api/hexagons?resolution={4|6}` \u2014 all hexagons with risk data\n   - `GET /api/hex/{h3id}` \u2014 single hex detail\n   - `GET /api/status` \u2014 data freshness & alert count\n   - `GET /api/alerts` \u2014 high-risk cells\n   - `GET /api/boundary` \u2014 Australia GeoJSON outline\n\n3. **Backend Services** (data resolution happens here, not via GraphQL resolvers):\n   - `ml_service` \u2014 XGBoost inference & probability scoring\n   - `weather_service` \u2014 WeatherAPI polling\n   - `firms_service` \u2014 NASA FIRMS satellite data\n   - `aus_fires_service` \u2014 Australian DEA fire detections\n   - `hex_service` \u2014 H3 hexagonal grid management\n\nIf you were expecting GraphQL, the architecture is simpler: **routes map directly to functions** in `api.py`, and those functions call service layer methods to fetch/compute data."
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 11275,
+      "total_output_tokens": 777,
+      "total_tool_calls": 5,
+      "total_turns": 4,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 1337,
+          "output_tokens": 132,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 2863,
+          "output_tokens": 111,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 3096,
+          "output_tokens": 60,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 3979,
+          "output_tokens": 474,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Perfect! Now I have a clear answer. Let me provide you with the comprehensive answer:\n\n## GraphQL Schema & Resolver Setup\n\n**This project does NOT use GraphQL**. Instead, it's a **REST API** built with **FastAPI**. Here's where everything is defined:\n\n### 1. **API Schema Definition**\n- **Location**: `API_CONTRACT.md` \u2014 This is the source of truth for the API contract\n- Defines the REST endpoints in human-readable format:\n  - `GET /api/hexagons?resolution={4|6}`\n  - `GET /api/hex/{h3}`\n  - `GET /api/status`\n  - `GET /api/alerts`\n  - `GET /api/boundary`\n\n### 2. **Resolver/Endpoint Implementation**\n- **Location**: `backend/routers/api.py`\n- Uses FastAPI's `@router.get()` decorator to define endpoints\n- Functions act as resolvers:\n  - `hexagons()` \u2014 fetches grid cells with ML predictions\n  - `hex_detail()` \u2014 returns single hexagon with region info\n  - `status()` \u2014 returns system status (data freshness, model state)\n  - `alerts()` \u2014 returns high-probability fire hexagons\n  - `boundary()` \u2014 returns Australia boundary as GeoJSON\n\n### 3. **Wiring**\n- **Location**: `backend/main.py`\n  - FastAPI app is created: `app = FastAPI()`\n  - Router is included: `app.include_router(api.router)`\n  - CORS middleware is configured\n  - Background scheduler manages periodic data refreshes\n\n### 4. **Data Flow**\n- Resolvers call service classes to get data:\n  - `ml.hex_payload()` \u2014 generates prediction payload\n  - `firms_service.cache` \u2014 gets active fire data\n  - `weather_service.cache` \u2014 gets weather data\n  - `grid` \u2014 provides hexagon grid cells\n\nThis is a **pure REST API** architecture, not GraphQL."
+    },
+    "context_pack_chars": 1458
+  },
+  {
+    "task": "how does the Redis caching layer get configured and invalidated?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 25164,
+      "total_output_tokens": 1439,
+      "total_tool_calls": 11,
+      "total_turns": 8,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 791,
+          "output_tokens": 77,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 882,
+          "output_tokens": 106,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 1101,
+          "output_tokens": 62,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 1219,
+          "output_tokens": 97,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 2204,
+          "output_tokens": 69,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 2334,
+          "output_tokens": 151,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 6980,
+          "output_tokens": 78,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 9653,
+          "output_tokens": 799,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Perfect! Now I have a comprehensive understanding. Let me provide a detailed answer:\n\n## Redis Caching Layer Configuration and Invalidation\n\n**Note:** This repository does **not** use Redis. Instead, it implements an **in-memory caching layer** with scheduled refresh patterns. Here's how it works:\n\n### Configuration\n\nThe caching system is configured through three main service classes:\n\n1. **WeatherCache** (`weather_service.py`)\n   - Stores weather data by H3 grid cell\n   - Can fetch live data from WeatherAPI.com (if `WEATHERAPI_KEY` env var is set)\n   - Falls back to Australian climate normals (lat/month lookup)\n   - Attributes: `by_cell` (dict), `updated_at` (timestamp), `ok` (bool), `live` (bool)\n\n2. **FirmsCache** (`firms_service.py`)\n   - Stores NASA FIRMS hotspot data by H3 resolution-4 cell\n   - Maps active fire coordinates to cell counts\n   - Requires `NASA_FIRMS_MAP_KEY` env var (optional demo mode available)\n   - Attributes: `fires_by_cell` (dict), `updated_at` (timestamp), `enabled` (bool)\n\n3. **AusFiresCache** (`aus_fires_service.py`)\n   - Aggregates incident data from NSW RFS and VIC Emergency public feeds\n   - Maps incidents to H3 res-4 cells\n   - No API key required\n\n### Invalidation & Refresh Schedule\n\nCache invalidation is **automatic** via `BackgroundScheduler` (APScheduler):\n\n```python\nscheduler.add_job(refresh_weather, \"interval\", minutes=30, id=\"weather\")\nscheduler.add_job(refresh_firms, \"interval\", minutes=60, id=\"firms\")\nscheduler.add_job(refresh_aus_fires, \"interval\", minutes=30, id=\"aus_fires\")\n```\n\n**Refresh Pattern:**\n- **Weather**: Every 30 minutes\n- **FIRMS hotspots**: Every 60 minutes  \n- **AUS fire incidents**: Every 30 minutes\n\nEach refresh:\n1. Calls `cache.refresh()` to fetch fresh data\n2. Triggers `ml.run_inference()` to recompute wildfire probabilities\n3. Stores results in `MLService.results` dict (keyed by res-4 cell)\n4. Saves a pickle snapshot to disk (`inference_snapshot.pkl`) for persistence\n\n### Data Flow\n\n```\nExternal APIs (Weather, FIRMS, AUS Fires)\n    \u2193\n    Cache.refresh()\n    \u2193\n    In-memory dicts (by_cell, fires_by_cell)\n    \u2193\n    ML Service reads from caches\n    \u2193\n    run_inference() \u2192 results dict\n    \u2193\n    API endpoints serve from memory\n    \u2193\n    Snapshot saved to disk for recovery\n```\n\n### Key Features\n\n- **Fallback mechanisms**: Weather uses climate normals if API unavailable; FIRMS uses demo data\n- **Snapshot persistence**: Inference results cached to disk (loaded on startup, max 2 hours old)\n- **Graceful degradation**: All services continue operating even if external APIs fail\n- **Zero latency serving**: All data is in-memory, API responses are instant\n\nThis design prioritizes **simplicity and reliability** over distributed caching\u2014suitable for a single-instance deployment."
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 10852,
+      "total_output_tokens": 1504,
+      "total_tool_calls": 6,
+      "total_turns": 2,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 1254,
+          "output_tokens": 290,
+          "tool_calls": 6
+        },
+        {
+          "input_tokens": 9598,
+          "output_tokens": 1214,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Based on the code, here's how the Redis caching layer gets configured and invalidated:\n\n## **Cache Configuration**\n\nThe system doesn't actually use Redis\u2014instead, it uses **in-memory Python dictionaries** that act as caches. There are three main cache objects:\n\n### 1. **FirmsCache** (`firms_service.py`, line 21)\n```python\nclass FirmsCache:\n    def __init__(self):\n        self.fires_by_cell: dict[str, int] = {}  # res-4 cell \u2192 fire count\n        self.updated_at: datetime | None = None\n        self.enabled = bool(os.environ.get(\"NASA_FIRMS_MAP_KEY\"))\n```\n- Stores NASA FIRMS satellite fire hotspots mapped to H3 hexagonal cells\n- Configured via `NASA_FIRMS_MAP_KEY` environment variable\n- Falls back to demo data if `FIRMS_DEMO=1` is set\n\n### 2. **AusFiresCache** (`aus_fires_service.py`, line 19)\n```python\nclass AusFiresCache:\n    def __init__(self):\n        self.fires_by_cell: dict[str, int] = {}  # res-4 cell \u2192 incident count\n        self.updated_at: datetime | None = None\n```\n- Stores Australian state fire agency incidents from NSW RFS and VIC Emergency feeds\n- No API key needed (public government feeds)\n\n### 3. **MLService Results** (`ml_service.py`, line 59)\n```python\nclass MLService:\n    def __init__(self):\n        self.model = None\n        self.results: dict[str, dict] = {}  # res-4 cell \u2192 inference results\n        self.updated_at: datetime | None = None\n```\n- Stores ML inference results with probabilities and risk bands for each cell\n\n---\n\n## **Cache Invalidation & Refresh Strategy**\n\nThe caches are **invalidated and refreshed on a fixed schedule** using APScheduler:\n\n### **Refresh Schedule** (`main.py`, lines 82-86)\n```python\nscheduler.add_job(refresh_weather, \"interval\", minutes=30, id=\"weather\")\nscheduler.add_job(refresh_firms, \"interval\", minutes=60, id=\"firms\")\nscheduler.add_job(refresh_aus_fires, \"interval\", minutes=30, id=\"aus_fires\")\nscheduler.start()\n```\n\n- **Weather cache**: refreshed every **30 minutes**\n- **FIRMS cache**: refreshed every **60 minutes**\n- **Australian fires cache**: refreshed every **30 minutes**\n\n### **Refresh Flow** (`main.py`, lines 36-60)\n\nEach refresh job:\n1. Calls the cache's `.refresh()` method (fetches fresh data from external APIs)\n2. Immediately triggers ML inference with updated data\n3. Logs any exceptions without crashing\n\n```python\ndef refresh_firms():\n    try:\n        firms_service.cache.refresh()    # Fetch new FIRMS data\n        ml.run_inference()               # Re-compute predictions\n    except Exception:\n        logger.exception(\"FIRMS refresh failed\")\n```\n\n### **Initial Load** (`main.py`, lines 60-66)\nOn startup:\n1. Loads grid, ML model, and snapshot (if available)\n2. Runs a quick inference with default weather\n3. Spawns a background thread for actual data fetches (don't block startup)\n\n```python\ndef initial_load():\n    firms_service.cache.refresh()\n    aus_fires_service.cache.refresh()\n    weather_service.cache.refresh()\n    ml.run_inference()\n```\n\n---\n\n## **Invalidation Mechanics**\n\nEach cache's `.refresh()` method:\n1. **Fetches fresh data** from external sources (NASA FIRMS API, NSW RFS GeoJSON, VIC Emergency feeds)\n2. **Overwrites the in-memory dictionary** entirely: `self.fires_by_cell = counts`\n3. **Updates the timestamp**: `self.updated_at = datetime.now(timezone.utc)`\n4. **Logs the operation** for monitoring\n\n**Example** (`firms_service.py`, lines 44-45, 50-54):\n```python\nself.fires_by_cell = counts      # Old cache data discarded\nself.updated_at = datetime.now(timezone.utc)\nlogger.info(\"FIRMS: %d hotspot rows -> %d affected cells\", len(df), len(counts))\n```\n\n---\n\n## **Key Points**\n\n| Aspect | Detail |\n|--------|--------|\n| **Cache type** | In-memory Python `dict` (not Redis) |\n| **Invalidation strategy** | Time-based scheduled refresh (TTL implicit in scheduler) |\n| **Refresh frequency** | Weather/Aus fires: 30 min, FIRMS: 60 min |\n| **Fallback** | Snapshot stored to disk; loaded on startup if <2 hours old |\n| **Consistency** | ML inference always triggered after any cache refresh |\n| **Error handling** | Failures logged but don't crash\u2014stale cache remains available |"
+    },
+    "context_pack_chars": 1260
+  },
+  {
+    "task": "how are real-time WebSocket connections managed between client and server?",
+    "baseline": {
+      "condition": "baseline",
+      "total_input_tokens": 22806,
+      "total_output_tokens": 1657,
+      "total_tool_calls": 18,
+      "total_turns": 7,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 792,
+          "output_tokens": 111,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 1016,
+          "output_tokens": 227,
+          "tool_calls": 4
+        },
+        {
+          "input_tokens": 1500,
+          "output_tokens": 187,
+          "tool_calls": 4
+        },
+        {
+          "input_tokens": 2672,
+          "output_tokens": 191,
+          "tool_calls": 4
+        },
+        {
+          "input_tokens": 3832,
+          "output_tokens": 158,
+          "tool_calls": 3
+        },
+        {
+          "input_tokens": 6352,
+          "output_tokens": 71,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 6642,
+          "output_tokens": 712,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Based on my exploration of the repository, I can now provide you with a comprehensive answer about how real-time connections are managed:\n\n## Real-Time Connection Management Overview\n\nThis project **does not use WebSocket connections**. Instead, it implements **HTTP polling** for near-real-time data synchronization. Here's how it works:\n\n### Architecture Pattern: Poll-Based Updates\n\n**Frontend Hook (`useHexData.ts`):**\n- Uses **polling at 60-second intervals** (`POLL_MS = 60_000`)\n- Maintains connection state: `\"connecting\" | \"connected\" | \"error\"`\n- Makes HTTP GET requests to two main endpoints simultaneously:\n  - `/api/hexagons?resolution={4|6}` - Hexagon grid data with risk scores\n  - `/api/status` - Metadata about data freshness\n\n```typescript\nconst POLL_MS = 60_000; // 60 second polling interval\n\n// Polls on interval + on resolution change\nuseEffect(() => {\n  const ctrl = new AbortController();\n  fetchAll(ctrl.signal);\n  const id = window.setInterval(() => fetchAll(), POLL_MS);\n  return () => {\n    ctrl.abort();\n    window.clearInterval(id);\n  };\n}, [resolution, fetchAll]);\n```\n\n### Connection Management Features\n\n1. **Error Handling with Graceful Degradation:**\n   - Only shows error UI if no data has ever been received\n   - Once connected, remains \"connected\" even if requests fail (cached data persists)\n   - Displays user-friendly error banner with retry message\n\n2. **Abort Signal Pattern:**\n   - Uses `AbortController` to cancel in-flight requests on cleanup\n   - Prevents memory leaks and race conditions\n\n3. **Data Freshness Tracking:**\n   - Timestamp tracking: `firms_updated`, `weather_updated`, `model_loaded`\n   - Header displays when data was last updated\n\n4. **Independent Data Fetching:**\n   - Boundary (Australia outline) fetched once, retried every 60s if missing\n   - Hex data and status fetched together in parallel requests\n\n### Backend Data Pipeline\n\n**`main.py` - Scheduled Refreshes:**\n```python\nscheduler.add_job(refresh_weather, \"interval\", minutes=30, id=\"weather\")\nscheduler.add_job(refresh_firms, \"interval\", minutes=60, id=\"firms\")\nscheduler.add_job(refresh_aus_fires, \"interval\", minutes=30, id=\"aus_fires\")\n```\n\nEach refresh triggers ML inference, so the backend continuously updates its state, which the frontend polls for.\n\n### Why Not WebSocket?\n\nThis approach is suitable because:\n- **60-second polling interval** is adequate for wildfire prediction use case (not millisecond-critical)\n- Simpler architecture without connection state complexity\n- Works reliably across network conditions\n- REST API is stateless and easier to scale\n- Each client independently decides polling frequency\n\nThis is a **pull-based model** rather than push-based WebSockets, making it stateless and horizontally scalable."
+    },
+    "treatment": {
+      "condition": "treatment",
+      "total_input_tokens": 21521,
+      "total_output_tokens": 888,
+      "total_tool_calls": 8,
+      "total_turns": 4,
+      "hit_turn_limit": false,
+      "turns": [
+        {
+          "input_tokens": 1327,
+          "output_tokens": 250,
+          "tool_calls": 5
+        },
+        {
+          "input_tokens": 6307,
+          "output_tokens": 115,
+          "tool_calls": 2
+        },
+        {
+          "input_tokens": 6502,
+          "output_tokens": 60,
+          "tool_calls": 1
+        },
+        {
+          "input_tokens": 7385,
+          "output_tokens": 463,
+          "tool_calls": 0
+        }
+      ],
+      "final_answer": "Based on my examination of the codebase, here's how real-time WebSocket connections are managed between client and server:\n\n## Real-Time WebSocket Connection Management\n\n**Current Status: No WebSocket Implementation Found**\n\nThe analysis reveals that **the backend does NOT currently implement WebSocket connections** for real-time updates. Instead, it uses a **polling-based architecture** with scheduled background updates:\n\n### Current Architecture:\n\n1. **Scheduled Background Refresh Jobs** (main.py):\n   - **Weather**: Refreshes every 30 minutes\n   - **FIRMS (NASA fire hotspots)**: Refreshes every 60 minutes  \n   - **AUS Fires (state incident feeds)**: Refreshes every 30 minutes\n   - Uses `APScheduler` for background scheduling\n\n2. **Data Update Flow**:\n   ```\n   Refresh Triggered \u2192 Service Cache Updated \u2192 ML Inference Run \u2192 Results Available\n   ```\n\n3. **Client Polling Pattern**:\n   The frontend would need to poll these REST endpoints to get updates:\n   - `GET /api/hexagons` - Grid cells with risk scores\n   - `GET /api/status` - Last update timestamps\n   - `GET /api/alerts` - Current fire alerts\n\n### Relevant Code:\n- **main.py** (L36-82): Defines refresh schedule and startup/shutdown handlers\n- **firms_service.py**: Caches fire hotspot data, refreshed on schedule\n- **aus_fires_service.py**: Caches state fire incidents, refreshed on schedule\n- **routers/api.py**: REST endpoints returning static snapshots\n\n### What's Missing for Real-Time WebSockets:\nTo implement true real-time WebSocket connections, you would need:\n- `@app.websocket(\"/ws\")` endpoint in FastAPI\n- Client connection management (connection pool, cleanup)\n- Event broadcasting when data refreshes\n- Graceful connection handling on server shutdown\n\nThe current architecture keeps things simple but requires clients to implement polling rather than receiving push updates automatically."
+    },
+    "context_pack_chars": 1460
+  }
+]

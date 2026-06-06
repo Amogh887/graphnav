@@ -95,12 +95,58 @@ def _run_context_command(argv: list[str]) -> None:
     sys.exit(0)
 
 
+def _run_graph_query_command(kind: str, argv: list[str]) -> None:
+    from codex_graph import multirepo
+    from codex_graph.graph_nav import GraphNav
+
+    parser = argparse.ArgumentParser(prog=f"codex-graph {kind}")
+    parser.add_argument("term", nargs="?", help="query (find) or symbol (neighbors)")
+    parser.add_argument("--root", default=".", metavar="PATH")
+    parser.add_argument("--config", default=None, metavar="PATH")
+    args = parser.parse_args(argv)
+    if not args.term:
+        parser.print_help()
+        sys.exit(1)
+
+    cfg = load_config(args.config)
+    graph_path = multirepo._overarching_graph_path(os.path.abspath(args.root))
+    if not os.path.exists(graph_path):
+        print(f"Error: no knowledge graph at {graph_path}. Run `codex-graph map` first.", file=sys.stderr)
+        sys.exit(2)
+    nav = GraphNav(graph_path, cfg.graph.skip_patterns)
+
+    if kind == "find":
+        hits = nav.find_symbols(args.term, k=10)
+        if not hits:
+            print("(no matches)")
+        for h in hits:
+            print(f"{h['symbol']} — {h['file']}:{h['loc']}")
+    else:
+        r = nav.neighbors(args.term)
+        if not r.get("found", True):
+            print("(symbol not found)")
+            sys.exit(0)
+        print(f"{r['symbol']} defined at {r['defined_at']}")
+        if r.get("callers"):
+            print("callers:")
+            for c in r["callers"]:
+                print("  " + c)
+        if r.get("callees"):
+            print("calls:")
+            for c in r["callees"]:
+                print("  " + c)
+    sys.exit(0)
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("map", "watch"):
         _run_mono_command(sys.argv[1], sys.argv[2:])
         return
     if len(sys.argv) > 1 and sys.argv[1] == "context":
         _run_context_command(sys.argv[2:])
+        return
+    if len(sys.argv) > 1 and sys.argv[1] in ("find", "neighbors"):
+        _run_graph_query_command(sys.argv[1], sys.argv[2:])
         return
 
     parser = argparse.ArgumentParser(
@@ -186,3 +232,7 @@ def main() -> None:
     except CodexTimeoutError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(124)
+
+
+if __name__ == "__main__":
+    main()

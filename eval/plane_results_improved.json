@@ -1,0 +1,234 @@
+[
+  {
+    "task": "add an is_overdue boolean SerializerMethodField to the issue serializer that is true when target_date is in the past and the issue's state is not in the completed group",
+    "category": "coding",
+    "context_pack_chars": 10026,
+    "baseline_reps": [
+      {
+        "condition": "baseline",
+        "total_input_tokens": 34580,
+        "total_output_tokens": 2575,
+        "total_tool_calls": 13,
+        "total_turns": 8,
+        "hit_turn_limit": false,
+        "turns": [
+          {
+            "input_tokens": 882,
+            "output_tokens": 56,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 1043,
+            "output_tokens": 89,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1256,
+            "output_tokens": 94,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1611,
+            "output_tokens": 102,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 4993,
+            "output_tokens": 120,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 7812,
+            "output_tokens": 159,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 8038,
+            "output_tokens": 775,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 8945,
+            "output_tokens": 1180,
+            "tool_calls": 0
+          }
+        ],
+        "final_answer": "The file is at the expected path. Here is the complete, precise unified diff:\n\n```diff\ndiff --git a/api/serializers/issue.py b/api/serializers/issue.py\n--- a/api/serializers/issue.py\n+++ b/api/serializers/issue.py\n@@ -14,6 +14,7 @@ from plane.db.models import (\n     Issue,\n     IssueType,\n     IssueActivity,\n+    StateGroup,\n     IssueAssignee,\n     FileAsset,\n     IssueComment,\n@@ -53,6 +54,8 @@ class IssueSerializer(BaseSerializer):\n     processing.\n     \"\"\"\n \n+    is_overdue = serializers.SerializerMethodField()\n+\n     assignees = serializers.ListField(\n         child=serializers.PrimaryKeyRelatedField(queryset=User.objects.values_list(\"id\", flat=True)),\n         write_only=True,\n@@ -70,6 +73,14 @@ class IssueSerializer(BaseSerializer):\n         read_only_fields = [\"id\", \"workspace\", \"project\", \"updated_by\", \"updated_at\", \"completed_at\"]\n         exclude = [\"description_json\", \"description_stripped\"]\n \n+    def get_is_overdue(self, obj):\n+        # Not overdue if there is no target date set\n+        if obj.target_date is None:\n+            return False\n+        # Not overdue if the state's group is completed\n+        if obj.state and obj.state.group == StateGroup.COMPLETED:\n+            return False\n+        # Overdue when today is strictly past the target date\n+        return timezone.now().date() > obj.target_date\n+\n     def validate(self, data):\n```\n\n---\n\nHere is the **complete unified diff** to apply:\n\n```diff\ndiff --git a/api/serializers/issue.py b/api/serializers/issue.py\n--- a/api/serializers/issue.py\n+++ b/api/serializers/issue.py\n@@ -14,6 +14,7 @@ from plane.db.models import (\n     Issue,\n     IssueType,\n     IssueActivity,\n+    StateGroup,\n     IssueAssignee,\n     FileAsset,\n     IssueComment,\n@@ -53,6 +54,8 @@ class IssueSerializer(BaseSerializer):\n     processing.\n     \"\"\"\n \n+    is_overdue = serializers.SerializerMethodField()\n+\n     assignees = serializers.ListField(\n         child=serializers.PrimaryKeyRelatedField(queryset=User.objects.values_list(\"id\", flat=True)),\n         write_only=True,\n@@ -70,6 +73,14 @@ class IssueSerializer(BaseSerializer):\n         read_only_fields = [\"id\", \"workspace\", \"project\", \"updated_by\", \"updated_at\", \"completed_at\"]\n         exclude = [\"description_json\", \"description_stripped\"]\n \n+    def get_is_overdue(self, obj):\n+        # Not overdue if there is no target date set\n+        if obj.target_date is None:\n+            return False\n+        # Not overdue if the state's group is completed\n+        if obj.state and obj.state.group == StateGroup.COMPLETED:\n+            return False\n+        # Overdue when today is strictly past the target date\n+        return timezone.now().date() > obj.target_date\n+\n     def validate(self, data):\n```\n\n### What was changed and why\n\n| Change | Reason |\n|---|---|\n| `StateGroup` added to the `from plane.db.models import (\u2026)` block | `StateGroup` is defined in `db/models/state.py` and re-exported through `db/models/__init__.py`; it exposes the `COMPLETED = \"completed\"` sentinel needed for the group check. |\n| `is_overdue = serializers.SerializerMethodField()` declared on `IssueSerializer` | Registers the read-only computed field with DRF; DRF automatically calls `get_is_overdue` to populate it. |\n| `get_is_overdue(self, obj)` method | Implements the three-step logic: \u2460 return `False` when `target_date` is `None` (no due date means it cannot be overdue); \u2461 return `False` when the linked state's group is `\"completed\"` (completed work is never overdue); \u2462 return `True` only when today's date (via `timezone.now().date()`, timezone-aware and consistent with the `DateField`) is **strictly after** `target_date`. `django.utils.timezone` was already imported at the top of the file, so no extra import is needed for it. |"
+      }
+    ],
+    "treatment_reps": [
+      {
+        "condition": "treatment",
+        "total_input_tokens": 32579,
+        "total_output_tokens": 3012,
+        "total_tool_calls": 17,
+        "total_turns": 12,
+        "hit_turn_limit": true,
+        "turns": [
+          {
+            "input_tokens": 362,
+            "output_tokens": 113,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 880,
+            "output_tokens": 140,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1298,
+            "output_tokens": 56,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 907,
+            "output_tokens": 60,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 2316,
+            "output_tokens": 81,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 2284,
+            "output_tokens": 98,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 1907,
+            "output_tokens": 188,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 2897,
+            "output_tokens": 181,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1719,
+            "output_tokens": 124,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 8402,
+            "output_tokens": 102,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 746,
+            "output_tokens": 140,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 8861,
+            "output_tokens": 1729,
+            "tool_calls": 2
+          }
+        ],
+        "final_answer": ""
+      }
+    ]
+  },
+  {
+    "task": "add \"priority\" to Issue.TRACKED_FIELDS so the ChangeTrackerMixin records priority changes, since it currently tracks only state_id",
+    "category": "coding",
+    "context_pack_chars": 10029,
+    "baseline_reps": [
+      {
+        "condition": "baseline",
+        "total_input_tokens": 21561,
+        "total_output_tokens": 956,
+        "total_tool_calls": 8,
+        "total_turns": 8,
+        "hit_turn_limit": false,
+        "turns": [
+          {
+            "input_tokens": 875,
+            "output_tokens": 112,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 1650,
+            "output_tokens": 65,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 1770,
+            "output_tokens": 61,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 1882,
+            "output_tokens": 36,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 2023,
+            "output_tokens": 55,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 2228,
+            "output_tokens": 59,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 4529,
+            "output_tokens": 112,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 6604,
+            "output_tokens": 456,
+            "tool_calls": 0
+          }
+        ],
+        "final_answer": "I now have a complete picture. The fix is straightforward: add `\"priority\"` to `Issue.TRACKED_FIELDS` in `db/models/issue.py`.\n\nHere is the diff:\n\n```diff\ndiff --git a/db/models/issue.py b/db/models/issue.py\nindex ...... 100644\n--- a/db/models/issue.py\n+++ b/db/models/issue.py\n@@ -104,7 +104,7 @@ class IssueManager(SoftDeletionManager):\n \n class Issue(ChangeTrackerMixin, ProjectBaseModel):\n-    TRACKED_FIELDS = [\"state_id\"]\n+    TRACKED_FIELDS = [\"state_id\", \"priority\"]\n \n     PRIORITY_CHOICES = (\n```\n\n---\n\n### What changed and why\n\n**File:** `db/models/issue.py`  \n**Line 105:** `TRACKED_FIELDS = [\"state_id\"]` \u2192 `TRACKED_FIELDS = [\"state_id\", \"priority\"]`\n\n`ChangeTrackerMixin._track_fields()` snapshots every field listed in `TRACKED_FIELDS` at `__init__` time and compares the snapshot to the live value in `changed_fields` / `has_changed()` / `_changes_on_save`. Because `priority` is a plain `CharField` stored directly on the `issues` table (not a FK), its attribute name is just `\"priority\"` \u2014 no `_id` suffix needed, unlike the FK `state` whose column is `state_id`.\n\nAdding `\"priority\"` here means:\n\n* `issue.has_changed(\"priority\")` will correctly return `True` when a priority update is saved.  \n* `issue._changes_on_save` (used by any post-save logic, signals, or activity feed writers) will include `\"priority\"` in the list of changed fields alongside `\"state_id\"`."
+      }
+    ],
+    "treatment_reps": [
+      {
+        "condition": "treatment",
+        "total_input_tokens": 2833,
+        "total_output_tokens": 970,
+        "total_tool_calls": 6,
+        "total_turns": 6,
+        "hit_turn_limit": false,
+        "turns": [
+          {
+            "input_tokens": 355,
+            "output_tokens": 119,
+            "tool_calls": 2
+          },
+          {
+            "input_tokens": 716,
+            "output_tokens": 128,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 899,
+            "output_tokens": 99,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 309,
+            "output_tokens": 36,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 192,
+            "output_tokens": 97,
+            "tool_calls": 1
+          },
+          {
+            "input_tokens": 362,
+            "output_tokens": 491,
+            "tool_calls": 0
+          }
+        ],
+        "final_answer": "Perfect. The context is clear. The `priority` field is defined on the same `Issue` model (confirmed by the `PRIORITY_CHOICES` right below). The fix is a one-line change \u2014 add `\"priority\"` to `TRACKED_FIELDS`.\n\nHere is the diff:\n\n```diff\ndiff --git a/db/models/issue.py b/db/models/issue.py\nindex 1234567..abcdefg 100644\n--- a/db/models/issue.py\n+++ b/db/models/issue.py\n@@ -102,7 +102,7 @@ class Issue(ChangeTrackerMixin, ProjectBaseModel):\n \n class Issue(ChangeTrackerMixin, ProjectBaseModel):\n-    TRACKED_FIELDS = [\"state_id\"]\n+    TRACKED_FIELDS = [\"state_id\", \"priority\"]\n \n     PRIORITY_CHOICES = (\n```\n\n---\n\n**What this does and why it's safe:**\n\n| Aspect | Detail |\n|---|---|\n| **File changed** | `db/models/issue.py`, line 105 only |\n| **Mechanism** | `ChangeTrackerMixin.__init__` calls `_track_fields()`, which iterates `TRACKED_FIELDS` and snapshots each field's value into `_original_values`. Adding `\"priority\"` means the mixin will also snapshot the issue's priority on load. |\n| **Downstream consumer** | `bgtasks/issue_activities_task.py::track_priority()` already compares `current_instance.get(\"priority\")` vs `requested_data.get(\"priority\")` \u2014 it is already wired up to produce an `IssueActivity` record; it just wasn't being fed a captured original value because the field wasn't tracked. |\n| **No migration needed** | `priority` is an existing `CharField` on `Issue`; no schema change is involved. |\n| **No other models affected** | The second `TRACKED_FIELDS` at line 479 belongs to the `IssueComment` model and is unrelated. |"
+      }
+    ]
+  }
+]

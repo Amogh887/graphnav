@@ -1,0 +1,28 @@
+# CATEGORY: coding
+add a per-route rate limit to the incident create endpoint in incident/views.py using the existing slowapi limiter in rate_limiter.py
+add a new boolean field auto_add_to_canvas to the IncidentPriority model and surface it in the create, update, and read schemas in incident/priority/models.py
+add a new escalation_threshold_minutes integer column to the case severity model and expose it in the case severity schemas
+add a validator to the workflow create schema that rejects a workflow name longer than 128 characters
+add a SignalFilterAction enum value named escalate to signal/models.py and handle it in the signal filtering logic in signal/service.py
+add a last_executed_at timestamp column to the Workflow model and set it when a workflow run completes in the workflow service
+add limit and offset pagination parameters to the tag get_all query in tag/service.py and wire them through the tag list endpoint in tag/views.py
+add an integer rating field constrained to 1 through 5 on the feedback model and validate the range in the feedback create schema
+add a description column to the Tag model and include it in the tag search_vector
+make the minimum entity match length configurable in entity/service.py so the entity extraction skips matches shorter than that length
+add a NOT_FOUND style 404 response to the incident get-by-id endpoint when the incident id does not exist
+make the default tactical report reminder interval configurable via an environment variable in config.py and use it when creating incident priorities
+add a CLI command to cli.py that prints all enabled plugins for a given project slug
+add a slack block-action handler in the dispatch_slack plugin that snoozes a signal instance
+write a unit test for the incident cost calculation logic in incident_cost/service.py
+# CATEGORY: architecture
+how does the incident flow orchestrate the conversation, ticket, storage, and group plugins when a new incident is created?
+how is the plugin system structured, and how are plugins registered, discovered, and invoked at runtime?
+how does signal detection and filtering work, from a SignalInstance being ingested to an engagement being triggered?
+how does authentication and authorization work across the API routes, and where is the current user resolved?
+how are scheduled background jobs defined and registered across the scheduler and the per-module scheduled.py files?
+# CATEGORY: irrelevant
+how is the GraphQL schema defined and where are its resolvers implemented?
+how does the Kafka consumer subscribe to topics and process incoming event messages?
+where is the React and Redux store configured on the frontend?
+how is the gRPC service definition compiled from the protobuf files?
+how does the Stripe billing webhook handle subscription renewal events?

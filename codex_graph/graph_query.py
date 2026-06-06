@@ -16,8 +16,55 @@ class RankedFile:
     score: float
 
 
+ALLOWED_EXTENSIONS = {
+    ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".go", ".java", ".kt", ".kts", ".cs", ".rb", ".rs", ".php",
+    ".swift", ".scala", ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp",
+    ".hh", ".m", ".mm", ".lua", ".dart", ".ex", ".exs", ".clj",
+    ".cljs", ".groovy", ".vue", ".svelte", ".sh", ".bash", ".zsh",
+    ".pl", ".r", ".sql", ".proto", ".thrift", ".graphql", ".gql",
+    ".md", ".mdx", ".markdown", ".rst", ".txt", ".adoc",
+}
+
+GENERATED_PATTERNS = (
+    ".pb.go", ".pb.cc", ".pb.h", "_pb2.py", "_pb2.pyi", "_pb2_grpc.py",
+    "pb2_grpc", "_grpc.pb.", "genproto/", "/generated/", ".generated.",
+    ".g.dart", "_pb.dart", "/migrations/",
+)
+
+
+def _is_rankable(source_file: str) -> bool:
+    lower = source_file.lower()
+    if any(p in lower for p in GENERATED_PATTERNS):
+        return False
+    return os.path.splitext(lower)[1] in ALLOWED_EXTENSIONS
+
+
+_IDENT_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z][a-z]+|[a-z]+|[A-Z]+|[0-9]+")
+
+
+def _stem(t: str) -> str:
+    if len(t) <= 4 or t.endswith("ss"):
+        return t
+    if t.endswith("ies"):
+        return t[:-3] + "y"
+    if t.endswith("es"):
+        return t[:-2]
+    if t.endswith("s"):
+        return t[:-1]
+    return t
+
+
 def _tokenize(s: str) -> list[str]:
-    return [t for t in re.findall(r"[a-z0-9]+", s.lower()) if len(t) >= 2]
+    toks: list[str] = []
+    for word in re.split(r"[^A-Za-z0-9]+", s):
+        if not word:
+            continue
+        for sub in (_IDENT_RE.findall(word) or [word]):
+            t = sub.lower()
+            if len(t) >= 2:
+                toks.append(_stem(t))
+    return toks
 
 
 class GraphIndex:
@@ -42,13 +89,20 @@ class GraphIndex:
             if cid is not None:
                 self.community_tokens[cid].update(tokens)
 
-            if not sf or any(p in sf for p in skip_patterns):
+            if not sf or any(p in sf for p in skip_patterns) or not _is_rankable(sf):
                 continue
 
             weight = self._TYPE_WEIGHT.get(n.get("file_type", "code"), 1)
             self.file_tokens[sf].extend(tokens * weight)
             if cid is not None:
                 self.file_communities[sf].add(cid)
+
+        for sf in list(self.file_tokens.keys()):
+            stem_path = os.path.splitext(sf)[0]
+            base_tokens = _tokenize(os.path.basename(stem_path))
+            dir_tokens = _tokenize(os.path.dirname(stem_path))
+            self.file_tokens[sf].extend(base_tokens * 6)
+            self.file_tokens[sf].extend(dir_tokens * 2)
 
         self._N = len(self.file_tokens)
         self._avgdl = (
@@ -91,6 +145,7 @@ class GraphIndex:
         community_boost_weight: float,
         bm25_k1: float,
         bm25_b: float,
+        keep_ratio: float = 0.3,
     ) -> list[RankedFile]:
         qtoks = _tokenize(prompt)
         if not qtoks:
@@ -101,10 +156,13 @@ class GraphIndex:
             for sf in self.file_tokens
         }
         ranked = sorted(scores.items(), key=lambda x: -x[1])
+        if not ranked or ranked[0][1] <= 0:
+            return []
+        floor = ranked[0][1] * keep_ratio
         return [
             RankedFile(source_file=sf, score=sc)
             for sf, sc in ranked[:top_k]
-            if sc > 0
+            if sc > 0 and sc >= floor
         ]
 
 
@@ -124,5 +182,6 @@ def query_files(
     community_boost_weight: float = 2.0,
     bm25_k1: float = 1.5,
     bm25_b: float = 0.75,
+    keep_ratio: float = 0.3,
 ) -> list[RankedFile]:
-    return index.rank(prompt, top_k, community_boost_weight, bm25_k1, bm25_b)
+    return index.rank(prompt, top_k, community_boost_weight, bm25_k1, bm25_b, keep_ratio)

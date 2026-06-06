@@ -39,9 +39,24 @@ class TestTokenize:
     def test_only_punctuation(self):
         assert _tokenize("!@#$%") == []
 
-    def test_camel_case_not_split(self):
+    def test_camel_case_split(self):
         tokens = _tokenize("buildPrompt")
-        assert "buildprompt" in tokens
+        assert "build" in tokens
+        assert "prompt" in tokens
+
+    def test_pascal_and_acronym_split(self):
+        tokens = _tokenize("HTTPResponseSerializer")
+        assert "http" in tokens
+        assert "response" in tokens
+        assert "serializer" in tokens
+
+    def test_screaming_snake_split(self):
+        tokens = _tokenize("TRACKED_FIELDS")
+        assert tokens == ["tracked", "field"]
+
+    def test_plural_stemming_matches_singular(self):
+        assert _tokenize("serializers") == _tokenize("serializer")
+        assert _tokenize("models") == _tokenize("model")
 
     def test_underscore_treated_as_separator(self):
         tokens = _tokenize("build_prompt")
@@ -63,7 +78,8 @@ class TestGraphIndex:
         nodes = [{"id": "n1", "label": "UserModel", "source_file": "models.py", "file_type": "code", "community": 0}]
         idx = self._make_index(tmp_path, nodes)
         assert "models.py" in idx.file_tokens
-        assert "usermodel" in idx.file_tokens["models.py"]
+        assert "user" in idx.file_tokens["models.py"]
+        assert "model" in idx.file_tokens["models.py"]
 
     def test_type_weights_applied(self, tmp_path):
         nodes = [
@@ -99,7 +115,8 @@ class TestGraphIndex:
         ]
         idx = self._make_index(tmp_path, nodes)
         assert 5 in idx.community_tokens
-        assert "foobar" in idx.community_tokens[5]
+        assert "foo" in idx.community_tokens[5]
+        assert "bar" in idx.community_tokens[5]
 
     def test_node_without_source_file_skipped_for_file_tokens(self, tmp_path):
         nodes = [

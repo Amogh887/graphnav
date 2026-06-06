@@ -1,0 +1,18 @@
+# Token-savings task suite for wildfire-app.
+# Mix of RELEVANT tasks (real features in this codebase) and
+# IRRELEVANT tasks (features that do NOT exist here) to test whether the
+# context pack helps the model answer / rule-out faster than blind exploration.
+
+# --- RELEVANT (features that exist) ---
+where is the fire risk prediction model implemented and how does it score risk?
+how does the FIRMS service fetch and cache active-fire detection data?
+how does the weather service compute climate normals for a grid cell?
+how are the Australian fire feeds for NSW and VIC fetched and merged?
+how is the ML model trained and what input features does it use?
+
+# --- IRRELEVANT (features that do NOT exist in this repo) ---
+how is user authentication and JWT login handled in this app?
+how does the Stripe payment integration process subscriptions?
+where is the GraphQL schema defined and how are resolvers wired up?
+how does the Redis caching layer get configured and invalidated?
+how are real-time WebSocket connections managed between client and server?

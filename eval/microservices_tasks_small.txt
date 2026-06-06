@@ -1,0 +1,18 @@
+# Small token-savings suite for microservices-demo (current-tier run, Haiku).
+# 5 coding + 2 explain + 3 irrelevant = 10 tasks. Run with --root .../src.
+
+# CATEGORY: coding
+enforce a maximum quantity per item in the cart service when adding items, returning an error if exceeded
+make the shipping service return free shipping when the order total exceeds a threshold
+add validation to the payment service that rejects expired credit cards by checking expiry month and year
+make the currency service's exchange-rate cache TTL configurable via an environment variable
+add retry with exponential backoff to the frontend's gRPC call into the checkout service
+
+# CATEGORY: explain
+how does the checkout service orchestrate calls to payment, shipping, and email?
+how does the cart service store items and how is its Redis backing configured?
+
+# CATEGORY: irrelevant
+where is user authentication and JWT login implemented in this app?
+how does the Stripe webhook handler process refunds?
+how does the Kafka event bus deliver messages between services?
