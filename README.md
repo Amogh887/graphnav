@@ -27,6 +27,7 @@ Requires Python ≥ 3.11. Pulls `graphifyy` (the `graphify` binary) automaticall
 **API key:** Place a `.env` file anywhere up the directory tree from your project (or inside any service subfolder). graphnav walks up and down to find it:
 
 ```
+OPENAI_API_KEY=sk-...
 ANTHROPIC_KEY=sk-ant-...
 ```
 
