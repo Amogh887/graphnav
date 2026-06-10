@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codex-graph"
+name = "codex-graphify"
 version = "0.1.0"
 description = "Codex CLI with per-service knowledge-graph context injection for monorepos"
 requires-python = ">=3.11"
