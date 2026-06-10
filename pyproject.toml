@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graphnav"
-version = "0.1.0"
+version = "1.1.0"
 description = "Knowledge-graph context injection for AI coding agents in monorepos"
 requires-python = ">=3.11"
 dependencies = ["graphifyy>=0.8", "mcp>=1.2"]
