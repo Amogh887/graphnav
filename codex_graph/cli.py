@@ -14,7 +14,7 @@ def _run_mono_command(cmd: str, argv: list[str]) -> None:
     from codex_graph import multirepo
 
     parser = argparse.ArgumentParser(
-        prog=f"codex-graph {cmd}",
+        prog=f"graphnav {cmd}",
         description={
             "map": "Build per-service graphs and cross-service bridge notes for a monorepo",
             "watch": "Watch for file changes and keep per-service graphs and bridge notes up-to-date",
@@ -56,8 +56,8 @@ def _auto_map_if_needed(cfg_path: str | None) -> None:
         return
 
     names = ", ".join(s.name for s in services)
-    print(f"[codex-graph] Detected {len(services)} service(s): {names}")
-    print(f"[codex-graph] Running 'codex-graph map' to build knowledge graphs ...", file=sys.stderr)
+    print(f"[graphnav] Detected {len(services)} service(s): {names}")
+    print(f"[graphnav] Running 'graphnav map' to build knowledge graphs ...", file=sys.stderr)
     rc = multirepo.run_map(root=root, mono_cfg=cfg.mono)
     sys.exit(rc)
 
@@ -66,13 +66,14 @@ def _run_context_command(argv: list[str]) -> None:
     from codex_graph import multirepo
 
     parser = argparse.ArgumentParser(
-        prog="codex-graph context",
-        description="Print a token-budgeted context pack (files + symbol locations + cross-service impact) for a coding task",
+        prog="graphnav context",
+        description="Print a token-budgeted context pack for a coding task. Defaults to inline code regions; use --locations-only for the file:line index.",
     )
     parser.add_argument("task", nargs="?", help="The coding task, in natural language")
     parser.add_argument("--root", default=".", metavar="PATH", help="Repo root (default: current directory)")
     parser.add_argument("--budget", type=int, default=None, metavar="N", help="Approx token budget for the pack")
     parser.add_argument("--files", type=int, default=None, metavar="N", help="Max number of files to include")
+    parser.add_argument("--locations-only", action="store_true", help="Emit file:line locations instead of inline code regions")
     parser.add_argument("--config", default=None, metavar="PATH", help="Path to config.toml")
     args = parser.parse_args(argv)
 
@@ -84,15 +85,86 @@ def _run_context_command(argv: list[str]) -> None:
         sys.exit(1)
 
     cfg = load_config(args.config)
-    pack = multirepo.build_context_pack(
-        root=args.root,
-        task=task,
-        top_files=args.files if args.files is not None else cfg.mono.context_top_files,
-        budget_tokens=args.budget if args.budget is not None else cfg.mono.context_budget_tokens,
-        skip_patterns=cfg.graph.skip_patterns,
-    )
+    if args.locations_only:
+        pack = multirepo.build_context_pack(
+            root=args.root,
+            task=task,
+            top_files=args.files if args.files is not None else cfg.mono.context_top_files,
+            budget_tokens=args.budget if args.budget is not None else cfg.mono.context_budget_tokens,
+            skip_patterns=cfg.graph.skip_patterns,
+        )
+    else:
+        kwargs = {"root": args.root, "task": task, "skip_patterns": cfg.graph.skip_patterns}
+        if args.files is not None:
+            kwargs["top_files"] = args.files
+        if args.budget is not None:
+            kwargs["budget_tokens"] = args.budget
+        pack = multirepo.build_context_pack_inline(**kwargs)
     print(pack)
     sys.exit(0)
+
+
+def _run_graph_query_command(kind: str, argv: list[str]) -> None:
+    from codex_graph import multirepo
+    from codex_graph.graph_nav import GraphNav
+
+    parser = argparse.ArgumentParser(prog=f"graphnav {kind}")
+    parser.add_argument("term", nargs="?", help="query (find) or symbol (neighbors)")
+    parser.add_argument("--root", default=".", metavar="PATH")
+    parser.add_argument("--config", default=None, metavar="PATH")
+    args = parser.parse_args(argv)
+    if not args.term:
+        parser.print_help()
+        sys.exit(1)
+
+    cfg = load_config(args.config)
+    graph_path = multirepo._overarching_graph_path(os.path.abspath(args.root))
+    if not os.path.exists(graph_path):
+        print(f"Error: no knowledge graph at {graph_path}. Run `graphnav map` first.", file=sys.stderr)
+        sys.exit(2)
+    nav = GraphNav(graph_path, cfg.graph.skip_patterns)
+
+    if kind == "impact":
+        from codex_graph.mcp_server import GraphTools
+
+        tools = GraphTools(os.path.abspath(args.root), cfg.graph.skip_patterns)
+        print(tools.impact(args.term))
+        sys.exit(0)
+
+    if kind == "find":
+        hits = nav.find_symbols(args.term, k=10)
+        if not hits:
+            print("(no matches)")
+        for h in hits:
+            print(f"{h['symbol']} — {h['file']}:{h['loc']}")
+    else:
+        r = nav.neighbors(args.term)
+        if not r.get("found", True):
+            print("(symbol not found)")
+            sys.exit(0)
+        print(f"{r['symbol']} defined at {r['defined_at']}")
+        if r.get("callers"):
+            print("callers:")
+            for c in r["callers"]:
+                print("  " + c)
+        if r.get("callees"):
+            print("calls:")
+            for c in r["callees"]:
+                print("  " + c)
+    sys.exit(0)
+
+
+def _run_serve_command(argv: list[str]) -> None:
+    from codex_graph import mcp_server
+
+    parser = argparse.ArgumentParser(
+        prog="graphnav serve",
+        description="Run the graphnav MCP server (stdio) so AI agents can call the graph tools natively",
+    )
+    parser.add_argument("--root", default=".", metavar="PATH", help="Repo root (default: current directory)")
+    parser.add_argument("--config", default=None, metavar="PATH", help="Path to config.toml")
+    args = parser.parse_args(argv)
+    sys.exit(mcp_server.serve(root=args.root, config_path=args.config))
 
 
 def main() -> None:
@@ -102,16 +174,25 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "context":
         _run_context_command(sys.argv[2:])
         return
+    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+        _run_serve_command(sys.argv[2:])
+        return
+    if len(sys.argv) > 1 and sys.argv[1] in ("find", "neighbors", "impact"):
+        _run_graph_query_command(sys.argv[1], sys.argv[2:])
+        return
 
     parser = argparse.ArgumentParser(
-        prog="codex-graph",
+        prog="graphnav",
         description=(
             "Codex CLI with knowledge-graph context injection for monorepos.\n\n"
-            "First-run (after pip install): just run 'codex-graph' or 'codex-graph map'\n"
+            "First-run (after pip install): just run 'graphnav' or 'graphnav map'\n"
             "in your monorepo root — services are auto-detected and graphs are built.\n\n"
             "Subcommands:\n"
-            "  map    Build per-service graphs and cross-service bridge notes\n"
-            "  watch  Keep graphs and bridge notes up-to-date as files change"
+            "  map      Build per-service graphs and cross-service bridge notes\n"
+            "  watch    Keep graphs and bridge notes up-to-date as files change\n"
+            "  context  Print a token-budgeted context pack for a task (free, no LLM)\n"
+            "  serve    Run the MCP server so AI agents call the graph tools natively\n"
+            "  find     Find symbols by query; neighbors/impact show a symbol's blast radius"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -166,6 +247,7 @@ def main() -> None:
             cfg.query.community_boost_weight,
             cfg.query.bm25_k1,
             cfg.query.bm25_b,
+            edge_boost_weight=cfg.query.edge_boost_weight,
         )
 
     if args.list_files:
@@ -186,3 +268,7 @@ def main() -> None:
     except CodexTimeoutError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(124)
+
+
+if __name__ == "__main__":
+    main()

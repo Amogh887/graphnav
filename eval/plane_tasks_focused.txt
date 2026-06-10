@@ -1,0 +1,28 @@
+# Focused single-area dev tasks for Plane backend (apps/api/plane).
+# Each targets 1-2 files so it completes in ~6-10 turns (run with --max-turns 12).
+# Grounded: Issue.TRACKED_FIELDS=["state_id"], throttles/ has only asset.py,
+# StateGroup enum exists, Project/Issue have archived_at, ChangeTrackerMixin in db/mixins.py.
+
+# CATEGORY: coding
+add an is_overdue boolean SerializerMethodField to the issue serializer that is true when target_date is in the past and the issue's state is not in the completed group
+add "priority" to Issue.TRACKED_FIELDS so the ChangeTrackerMixin records priority changes, since it currently tracks only state_id
+add a new throttle class for issue creation in plane/throttles that limits to 30 requests per minute, mirroring the existing asset throttle
+add validation to the label serializer that rejects a color value which is not a valid hex color code
+add an is_archived property to the Project model that returns whether archived_at is set
+add an is_completed_group method to the State model that returns whether the state belongs to the completed group
+add a query parameter filter for priority to the issue list endpoint queryset
+add a completed_at timestamp field to the Module model and the corresponding migration
+add a validator to the workspace serializer that rejects a slug containing spaces or uppercase letters
+add a custom DRF pagination class with a page size of 50 and apply it to the project list view
+add a SerializerMethodField to the user serializer that exposes the number of workspaces the user belongs to
+add a utility function in plane/utils that returns whether an email address uses a disposable-email domain
+add a management command that prints the number of active issues per project
+add a custom permission class that only allows workspace admins to delete, in the permissions module
+add a __str__ method to the Module model that returns the module name and its project identifier
+
+# CATEGORY: explain
+how is an issue's activity log recorded, and which task and functions handle it?
+how is request authentication enforced, and which middleware and classes are involved?
+how are API throttles configured and applied in this backend?
+how does soft deletion work through the model mixins?
+what fields does the issue serializer expose and how is it structured?

@@ -3,17 +3,17 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codex-graph"
+name = "graphnav"
 version = "0.1.0"
-description = "Codex CLI with per-service knowledge-graph context injection for monorepos"
+description = "Knowledge-graph context injection for AI coding agents in monorepos"
 requires-python = ">=3.11"
-dependencies = ["graphifyy>=0.8"]
+dependencies = ["graphifyy>=0.8", "mcp>=1.2"]
 
 [project.scripts]
-codex-graph = "codex_graph.cli:main"
+graphnav = "codex_graph.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "anthropic>=0.40"]
 
 [tool.setuptools.packages.find]
 where = ["."]

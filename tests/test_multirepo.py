@@ -28,8 +28,10 @@ from codex_graph.multirepo import (
     run_extract,
     run_map,
     run_watch,
+    staleness_note,
     write_bridges_md,
     write_copilot_instructions,
+    write_graph_meta,
     write_monorepo_map,
     write_symbols_md,
 )
@@ -810,7 +812,7 @@ class TestWriteCopilotInstructions:
     def test_directs_to_context_command(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
         path = write_copilot_instructions(str(tmp_path), [svc])
-        assert "codex-graph context" in Path(path).read_text()
+        assert "graphnav context" in Path(path).read_text()
 
     def test_leads_with_skip_gate(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
@@ -823,21 +825,21 @@ class TestWriteCopilotInstructions:
         write_copilot_instructions(str(tmp_path), [svc])
         agents = tmp_path / "AGENTS.md"
         assert agents.exists()
-        assert "codex-graph context" in agents.read_text()
+        assert "graphnav context" in agents.read_text()
 
     def test_also_writes_claude_md(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
         write_copilot_instructions(str(tmp_path), [svc])
         claude_md = tmp_path / "CLAUDE.md"
         assert claude_md.exists()
-        assert "codex-graph context" in claude_md.read_text()
+        assert "graphnav context" in claude_md.read_text()
 
     def test_wrapped_in_managed_block(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
         path = write_copilot_instructions(str(tmp_path), [svc])
         content = Path(path).read_text()
-        assert "<!-- codex-graph:start -->" in content
-        assert "<!-- codex-graph:end -->" in content
+        assert "<!-- graphnav:start -->" in content
+        assert "<!-- graphnav:end -->" in content
 
 
 # ── _write_managed_block ─────────────────────────────────────────────────────
@@ -847,7 +849,7 @@ class TestManagedBlock:
         p = str(tmp_path / "AGENTS.md")
         _write_managed_block(p, "HELLO")
         content = Path(p).read_text()
-        assert "<!-- codex-graph:start -->" in content
+        assert "<!-- graphnav:start -->" in content
         assert "HELLO" in content
 
     def test_preserves_existing_user_content(self, tmp_path):
@@ -869,7 +871,22 @@ class TestManagedBlock:
         assert "keep me" in content
         assert "SECOND" in content
         assert "FIRST" not in content
-        assert content.count("<!-- codex-graph:start -->") == 1
+        assert content.count("<!-- graphnav:start -->") == 1
+
+    def test_migrates_legacy_marker_in_place(self, tmp_path):
+        p = tmp_path / "AGENTS.md"
+        p.write_text(
+            "# My rules\nkeep me\n\n"
+            "<!-- codex-graph:start -->\nOLD\n<!-- codex-graph:end -->\n"
+        )
+        _write_managed_block(str(p), "NEW")
+        content = p.read_text()
+        assert "# My rules" in content
+        assert "keep me" in content
+        assert "NEW" in content
+        assert "OLD" not in content
+        assert "<!-- codex-graph:start -->" not in content
+        assert content.count("<!-- graphnav:start -->") == 1
 
 
 # ── build_playbook_text ──────────────────────────────────────────────────────
@@ -1294,3 +1311,52 @@ class TestRunWatch:
         monkeypatch.setattr("codex_graph.multirepo.time.sleep", fake_sleep)
         run_watch(str(two_svc_root), MonoConfig(watch_poll_interval=0.001))
         assert popen_calls[0] >= 2
+
+
+# ── staleness detection ──────────────────────────────────────────────────────
+
+class TestStaleness:
+    def test_write_graph_meta_records_sha(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo._git_sha", lambda root: "deadbeefcafe")
+        write_graph_meta(str(tmp_path))
+        meta = json.loads((tmp_path / "graphify-out" / ".graphnav-meta.json").read_text())
+        assert meta["git_sha"] == "deadbeefcafe"
+        assert meta["built_at"]
+
+    def test_no_note_when_meta_missing(self, tmp_path):
+        assert staleness_note(str(tmp_path)) == ""
+
+    def test_no_note_when_sha_matches(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo._git_sha", lambda root: "aaaa1111")
+        write_graph_meta(str(tmp_path))
+        assert staleness_note(str(tmp_path)) == ""
+
+    def test_note_when_sha_differs(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo._git_sha", lambda root: "aaaa1111")
+        write_graph_meta(str(tmp_path))
+        monkeypatch.setattr("codex_graph.multirepo._git_sha", lambda root: "bbbb2222")
+        monkeypatch.setattr("codex_graph.multirepo._commits_between", lambda root, a, b: 3)
+        note = staleness_note(str(tmp_path))
+        assert "stale" in note
+        assert "aaaa1111" in note
+        assert "bbbb2222" in note
+        assert "3 commit" in note
+
+    def test_no_note_without_git(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo._git_sha", lambda root: None)
+        write_graph_meta(str(tmp_path))
+        assert staleness_note(str(tmp_path)) == ""
+
+    def test_inline_pack_surfaces_stale_note(self, tmp_path, monkeypatch):
+        nodes = [{"id": "a", "label": "create_incident", "source_file": "api/views.py",
+                  "file_type": "code", "source_location": "L1", "community": 0}]
+        write_graph(tmp_path / "graphify-out" / "graph.json", nodes=nodes)
+        (tmp_path / "api").mkdir()
+        (tmp_path / "api" / "views.py").write_text("def create_incident():\n    pass\n")
+        monkeypatch.setattr("codex_graph.multirepo._git_sha", lambda root: "old00000")
+        write_graph_meta(str(tmp_path))
+        monkeypatch.setattr("codex_graph.multirepo._git_sha", lambda root: "new11111")
+        monkeypatch.setattr("codex_graph.multirepo._commits_between", lambda root, a, b: 2)
+        from codex_graph.multirepo import build_context_pack_inline
+        pack = build_context_pack_inline(root=str(tmp_path), task="incident")
+        assert "stale" in pack

@@ -39,9 +39,24 @@ class TestTokenize:
     def test_only_punctuation(self):
         assert _tokenize("!@#$%") == []
 
-    def test_camel_case_not_split(self):
+    def test_camel_case_split(self):
         tokens = _tokenize("buildPrompt")
-        assert "buildprompt" in tokens
+        assert "build" in tokens
+        assert "prompt" in tokens
+
+    def test_pascal_and_acronym_split(self):
+        tokens = _tokenize("HTTPResponseSerializer")
+        assert "http" in tokens
+        assert "response" in tokens
+        assert "serializer" in tokens
+
+    def test_screaming_snake_split(self):
+        tokens = _tokenize("TRACKED_FIELDS")
+        assert tokens == ["tracked", "field"]
+
+    def test_plural_stemming_matches_singular(self):
+        assert _tokenize("serializers") == _tokenize("serializer")
+        assert _tokenize("models") == _tokenize("model")
 
     def test_underscore_treated_as_separator(self):
         tokens = _tokenize("build_prompt")
@@ -63,7 +78,8 @@ class TestGraphIndex:
         nodes = [{"id": "n1", "label": "UserModel", "source_file": "models.py", "file_type": "code", "community": 0}]
         idx = self._make_index(tmp_path, nodes)
         assert "models.py" in idx.file_tokens
-        assert "usermodel" in idx.file_tokens["models.py"]
+        assert "user" in idx.file_tokens["models.py"]
+        assert "model" in idx.file_tokens["models.py"]
 
     def test_type_weights_applied(self, tmp_path):
         nodes = [
@@ -99,7 +115,8 @@ class TestGraphIndex:
         ]
         idx = self._make_index(tmp_path, nodes)
         assert 5 in idx.community_tokens
-        assert "foobar" in idx.community_tokens[5]
+        assert "foo" in idx.community_tokens[5]
+        assert "bar" in idx.community_tokens[5]
 
     def test_node_without_source_file_skipped_for_file_tokens(self, tmp_path):
         nodes = [
@@ -156,6 +173,31 @@ class TestGraphIndex:
         nodes = [{"id": "n1", "norm_label": "normalized", "source_file": "f.py", "file_type": "code", "community": 0}]
         idx = self._make_index(tmp_path, nodes)
         assert "normalized" in idx.file_tokens["f.py"]
+
+    def test_file_neighbors_from_links(self, tmp_path):
+        nodes = [
+            {"id": "a", "label": "Foo", "source_file": "a.py", "file_type": "code", "community": 0},
+            {"id": "b", "label": "Bar", "source_file": "b.py", "file_type": "code", "community": 0},
+        ]
+        graph_path = tmp_path / "graph.json"
+        write_graph(graph_path, nodes=nodes, links=[{"source": "a", "target": "b", "relation": "calls"}])
+        idx = GraphIndex(str(graph_path), [])
+        assert "b.py" in idx.file_neighbors["a.py"]
+        assert "a.py" in idx.file_neighbors["b.py"]
+
+    def test_edge_boost_pulls_in_called_neighbor(self, tmp_path):
+        nodes = [
+            {"id": "a", "label": "rate limiter middleware", "source_file": "limits.py", "file_type": "code", "community": 0},
+            {"id": "b", "label": "create incident endpoint", "source_file": "views.py", "file_type": "code", "community": 0},
+        ]
+        graph_path = tmp_path / "graph.json"
+        write_graph(graph_path, nodes=nodes, links=[{"source": "a", "target": "b", "relation": "calls"}])
+        idx = GraphIndex(str(graph_path), [])
+
+        no_edges = [r.source_file for r in idx.rank("rate limiter", 10, 0.0, 1.5, 0.75, edge_boost_weight=0.0)]
+        with_edges = [r.source_file for r in idx.rank("rate limiter", 10, 0.0, 1.5, 0.75, edge_boost_weight=0.5)]
+        assert "views.py" not in no_edges
+        assert "views.py" in with_edges
 
 
 class TestLoadIndex:

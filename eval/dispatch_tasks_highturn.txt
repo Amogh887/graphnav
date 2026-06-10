@@ -1,0 +1,8 @@
+# CATEGORY: coding
+add a new escalation_threshold_minutes integer column to the case severity model and expose it in the case severity schemas
+add an integer rating field constrained to 1 through 5 on the feedback model and validate the range in the feedback create schema
+add limit and offset pagination parameters to the tag get_all query in tag/service.py and wire them through the tag list endpoint in tag/views.py
+# CATEGORY: architecture
+how does signal detection and filtering work, from a SignalInstance being ingested to an engagement being triggered?
+# CATEGORY: irrelevant
+how does the Kafka consumer subscribe to topics and process incoming event messages?

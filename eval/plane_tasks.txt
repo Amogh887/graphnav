@@ -1,0 +1,38 @@
+# Holistic developer task suite for Plane backend (apps/api/plane, Django).
+# Grounded in the real codebase: Issue.TRACKED_FIELDS=["state_id"] (only state is audited),
+# throttles/ has only asset.py, authentication/rate_limit.py exists, archived_at on Issue/Project.
+# Run with --root /Users/amogh/plane/apps/api/plane. 15 coding + 5 explain.
+
+# CATEGORY: coding
+add a per-user throttle limiting issue creation to 30 requests per minute and apply it to the issue create endpoint, mirroring the existing plane/throttles/asset.py pattern
+track changes to an issue's priority in the issue activity log the same way state changes are tracked, since Issue.TRACKED_FIELDS currently only includes state_id
+add an API endpoint that returns all issues assigned to the current authenticated user across every workspace they belong to
+add archived_at soft-archiving to the Cycle model the same way Project and Issue do it, and exclude archived cycles from the default cycle list endpoint
+add server-side validation that rejects an issue whose target_date is earlier than its start_date
+add a duplicate-issue endpoint that clones an issue together with its labels and assignees into the same project
+
+# CATEGORY: explain
+how does authentication work end to end, including sessions, the social and magic-link providers, and the auth middleware?
+how is the Issue model structured and which related models reference it?
+
+# CATEGORY: coding
+add a custom DRF permission that allows only workspace admins to delete a project, and apply it to the project delete view
+add an endpoint that bulk-archives issues given a list of issue ids in a single request
+add a serializer field is_overdue to the issue serializer that is true when target_date is in the past and the issue is not in a completed state
+add a Celery task that emails an issue's subscribers when its state changes into a completed-group state, wired into the existing issue activity flow
+
+# CATEGORY: explain
+how are background jobs defined and dispatched with Celery in this backend?
+how does the workspace and project membership and role-based permission model work?
+
+# CATEGORY: coding
+when a State is deleted, reassign its issues to the project's default state instead of cascading the delete
+add an is_favorite annotation to the project list endpoint indicating whether the current user has favorited each project, using the Favorite model
+add rate limiting to the magic-link sign-in endpoint using plane/authentication/rate_limit.py
+
+# CATEGORY: explain
+how does the intake (issue triage/inbox) flow work from the API down to the models?
+
+# CATEGORY: coding
+add a webhook event that fires when a Cycle is marked completed, dispatched through the existing webhook background task
+add cursor pagination to the workspace members list endpoint

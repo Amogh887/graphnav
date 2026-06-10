@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -180,7 +181,7 @@ def run_extract(
     timeout: int = 600,
     env: dict[str, str] | None = None,
 ) -> int:
-    print(f"[codex-graph] extracting {service.name} ...", file=sys.stderr)
+    print(f"[graphnav] extracting {service.name} ...", file=sys.stderr)
     proc = subprocess.Popen(
         [graphify_path, "extract", service.abs_path, "--backend", backend, "--out", service.abs_path],
         stdout=subprocess.PIPE,
@@ -194,6 +195,66 @@ def run_extract(
 
 def _overarching_graph_path(root: str) -> str:
     return os.path.join(root, "graphify-out", "graph.json")
+
+
+def _graph_meta_path(root: str) -> str:
+    return os.path.join(root, "graphify-out", ".graphnav-meta.json")
+
+
+def _git_sha(root: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", root, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def _commits_between(root: str, a: str, b: str) -> int:
+    try:
+        out = subprocess.run(
+            ["git", "-C", root, "rev-list", "--count", f"{a}..{b}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            return int(out.stdout.strip() or 0)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return 0
+
+
+def write_graph_meta(root: str) -> None:
+    meta = {"built_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "git_sha": _git_sha(root)}
+    path = _graph_meta_path(root)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+
+def staleness_note(root: str) -> str:
+    path = _graph_meta_path(root)
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path) as f:
+            meta = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return ""
+    built_sha = meta.get("git_sha")
+    current = _git_sha(root)
+    if not built_sha or not current or built_sha == current:
+        return ""
+    behind = _commits_between(root, built_sha, current)
+    span = f"{behind} commit(s)" if behind else "some commits"
+    return (
+        f"> ⚠️ Knowledge graph is stale: built at {built_sha[:8]}, HEAD is now "
+        f"{current[:8]} ({span} later). Line numbers may have drifted — "
+        "re-run `graphnav map`."
+    )
 
 
 def _overarching_service(root: str) -> ServiceInfo:
@@ -399,8 +460,9 @@ def write_monorepo_map(root: str, services: list[ServiceInfo]) -> str:
     return path
 
 
-_BLOCK_START = "<!-- codex-graph:start -->"
-_BLOCK_END = "<!-- codex-graph:end -->"
+_BLOCK_START = "<!-- graphnav:start -->"
+_BLOCK_END = "<!-- graphnav:end -->"
+_LEGACY_MARKERS = (("<!-- codex-graph:start -->", "<!-- codex-graph:end -->"),)
 
 
 def build_playbook_text(root: str, services: list[ServiceInfo]) -> str:
@@ -422,11 +484,11 @@ def build_playbook_text(root: str, services: list[ServiceInfo]) -> str:
         "Just make it — no further graphify steps needed.",
         "- Everything else — including code changes, explanations, architecture questions, "
         '"how does X work", overviews, or anything touching unfamiliar files:',
-        '  1. Run `codex-graph context "<task>"` — prints the minimal files, their symbol '
+        '  1. Run `graphnav context "<task>"` — prints the minimal files, their symbol '
         "`file:line` locations, and any cross-service impact.",
         "  2. Open ONLY those files; read the given `file:line` regions, not whole files.",
         '  3. Before changing a symbol flagged "Cross-service impact", run '
-        '`graphify affected "<symbol>"`.',
+        '`graphnav impact "<symbol>"` to see its blast radius (callers/callees).',
         "  4. Implement (or answer), then run the project's tests if code changed.",
         "",
         "**Never** use `find`/`ls`/`cat` to survey the repo. If graphify doesn't give "
@@ -450,9 +512,16 @@ def _write_managed_block(path: str, content: str) -> None:
         except OSError:
             existing = ""
 
-    if _BLOCK_START in existing and _BLOCK_END in existing:
-        before = existing.split(_BLOCK_START, 1)[0]
-        after = existing.split(_BLOCK_END, 1)[1]
+    start_marker, end_marker = _BLOCK_START, _BLOCK_END
+    if not (start_marker in existing and end_marker in existing):
+        for legacy_start, legacy_end in _LEGACY_MARKERS:
+            if legacy_start in existing and legacy_end in existing:
+                start_marker, end_marker = legacy_start, legacy_end
+                break
+
+    if start_marker in existing and end_marker in existing:
+        before = existing.split(start_marker, 1)[0]
+        after = existing.split(end_marker, 1)[1]
         new_content = before + block.rstrip("\n") + after
     elif existing.strip():
         new_content = existing.rstrip("\n") + "\n\n" + block
@@ -489,7 +558,7 @@ def build_context_pack(
         return (
             f"# Context for: {task}\n\n"
             f"No knowledge graph found at {rel}.\n"
-            "Run `codex-graph map` (monorepo) or `graphify extract .` first.\n"
+            "Run `graphnav map` (monorepo) or `graphify extract .` first.\n"
         )
 
     if skip_patterns is None:
@@ -510,6 +579,9 @@ def build_context_pack(
     selected = [rf.source_file for rf in ranked]
 
     out_lines = [f"# Context for: {task}", ""]
+    note = staleness_note(root)
+    if note:
+        out_lines += [note, ""]
     if not selected:
         out_lines.append(
             "_No matching files. Try terms from the code itself (function or class names)._"
@@ -557,6 +629,108 @@ def build_context_pack(
     return text
 
 
+def _extract_code_windows(abs_path, lines_wanted, before=2, after=14, max_lines=110):
+    try:
+        with open(abs_path, errors="replace") as f:
+            src = f.read().splitlines()
+    except OSError:
+        return ""
+    n = len(src)
+    keep = set()
+    for ln in lines_wanted:
+        if 1 <= ln <= n:
+            for i in range(max(1, ln - before), min(n, ln + after) + 1):
+                keep.add(i)
+    if not keep:
+        return ""
+    kept = sorted(keep)[:max_lines]
+    pieces = []
+    prev = None
+    for i in kept:
+        if prev is not None and i > prev + 1:
+            pieces.append("        ...")
+        pieces.append(f"{i:>5}  {src[i - 1]}")
+        prev = i
+    return "\n".join(pieces)
+
+
+def build_context_pack_inline(root, task, top_files=3, budget_tokens=2500, skip_patterns=None):
+    from codex_graph.graph_query import load_index, query_files
+
+    root = os.path.abspath(root)
+    overarching_path = _overarching_graph_path(root)
+    if not os.path.exists(overarching_path):
+        return f"# Context for: {task}\n\nNo knowledge graph found.\n"
+    if skip_patterns is None:
+        skip_patterns = [
+            "node_modules", ".git", "graphify-out", "dist", "build",
+            "playwright-report", "test-results", ".next", "coverage",
+        ]
+    try:
+        index = load_index(overarching_path, skip_patterns)
+        ranked = query_files(task, index, top_files)
+    except Exception:
+        ranked = []
+
+    with open(overarching_path) as f:
+        graph = json.load(f)
+    by_file = _symbols_by_file(graph)
+
+    out = [f"# Context for: {task}", ""]
+    note = staleness_note(root)
+    if note:
+        out += [note, ""]
+    out.append(
+        "## Relevant code (extracted from the knowledge graph — already in context, do not re-open these files)"
+    )
+    if not ranked:
+        out.append("_No confident matches; explore normally._")
+        return "\n".join(out) + "\n"
+
+    for rf in ranked:
+        sf = rf.source_file
+        syms = by_file.get(sf, [])
+        line_nums = []
+        for _label, loc in syms:
+            m = re.search(r"L(\d+)", loc or "")
+            if m:
+                line_nums.append(int(m.group(1)))
+        snippet = _extract_code_windows(os.path.join(root, sf), line_nums)
+        out.append("")
+        out.append(f"### {sf}")
+        if syms:
+            out.append("symbols: " + ", ".join(label for label, _ in syms[:10]))
+        if snippet:
+            out.append("```")
+            out.append(snippet)
+            out.append("```")
+
+    from codex_graph.graph_nav import GraphNav
+
+    try:
+        nav = GraphNav(overarching_path, skip_patterns)
+        refs = nav.references_to([rf.source_file for rf in ranked], limit=12)
+    except Exception:
+        refs = []
+    if refs:
+        out.append("")
+        out.append("## Other code that references the above (likely also needs edits)")
+        out.extend("- " + r for r in refs)
+
+    out += [
+        "",
+        "## Next",
+        "The relevant code is shown above. Make the change directly; only open a file "
+        "if you need a region not shown. To explore further, use the graph tools "
+        "(graph_find, graph_neighbors) instead of broad searches.",
+    ]
+    text = "\n".join(out) + "\n"
+    char_budget = max(budget_tokens, 0) * 4
+    if char_budget and len(text) > char_budget:
+        text = text[:char_budget].rstrip() + "\n```\n\n_(truncated to budget)_\n"
+    return text
+
+
 def _refresh(
     root: str,
     services: list[ServiceInfo],
@@ -569,6 +743,7 @@ def _refresh(
         write_symbols_md(svc)
     write_monorepo_map(root, services)
     write_copilot_instructions(root, services)
+    write_graph_meta(root)
     return bridges
 
 
@@ -600,7 +775,7 @@ def run_map(
     env = _build_subprocess_env(root)
     overarching_path = _overarching_graph_path(root)
 
-    print(f"[codex-graph] Building overarching graph across {len(services)} service(s): {', '.join(s.name for s in services)}", file=sys.stderr)
+    print(f"[graphnav] Building overarching graph across {len(services)} service(s): {', '.join(s.name for s in services)}", file=sys.stderr)
     rc = build_overarching_graph(root, graphify_path, backend, env=env)
     if rc != 0 or not os.path.exists(overarching_path):
         print(f"Error: overarching graphify extraction failed (exit {rc}).", file=sys.stderr)
@@ -641,7 +816,7 @@ def run_watch(
     overarching_path = _overarching_graph_path(root)
 
     if not os.path.exists(overarching_path):
-        print(f"[codex-graph] Bootstrapping overarching graph for {len(services)} service(s) ...", file=sys.stderr)
+        print(f"[graphnav] Bootstrapping overarching graph for {len(services)} service(s) ...", file=sys.stderr)
         rc = build_overarching_graph(root, graphify_path, backend, env=env)
         if rc != 0 or not os.path.exists(overarching_path):
             print(f"Error: bootstrap extraction failed (exit {rc}).", file=sys.stderr)
@@ -663,7 +838,7 @@ def run_watch(
     except OSError:
         last_mtime = 0.0
 
-    print(f"[codex-graph] Watching {root} ({len(services)} service(s)). Press Ctrl-C to stop.", file=sys.stderr)
+    print(f"[graphnav] Watching {root} ({len(services)} service(s)). Press Ctrl-C to stop.", file=sys.stderr)
     try:
         while True:
             time.sleep(mono_cfg.watch_poll_interval)
@@ -675,15 +850,15 @@ def run_watch(
             if mtime != last_mtime:
                 last_mtime = mtime
                 ts = time.strftime("%H:%M:%S")
-                print(f"[codex-graph] {ts} graph updated — re-partitioning and re-analyzing bridges ...", file=sys.stderr)
+                print(f"[graphnav] {ts} graph updated — re-partitioning and re-analyzing bridges ...", file=sys.stderr)
                 _refresh(root, services, overarching_path)
 
             if watch_proc.poll() is not None:
-                print(f"[codex-graph] WARNING: graphify watch exited (exit {watch_proc.returncode}), restarting ...", file=sys.stderr)
+                print(f"[graphnav] WARNING: graphify watch exited (exit {watch_proc.returncode}), restarting ...", file=sys.stderr)
                 watch_proc = _start_watch()
 
     except KeyboardInterrupt:
-        print("\n[codex-graph] Stopping watch ...", file=sys.stderr)
+        print("\n[graphnav] Stopping watch ...", file=sys.stderr)
         watch_proc.terminate()
         try:
             watch_proc.wait(timeout=5)
