@@ -115,6 +115,13 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
         sys.exit(2)
     nav = GraphNav(graph_path, cfg.graph.skip_patterns)
 
+    if kind == "impact":
+        from codex_graph.mcp_server import GraphTools
+
+        tools = GraphTools(os.path.abspath(args.root), cfg.graph.skip_patterns)
+        print(tools.impact(args.term))
+        sys.exit(0)
+
     if kind == "find":
         hits = nav.find_symbols(args.term, k=10)
         if not hits:
@@ -138,6 +145,19 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
     sys.exit(0)
 
 
+def _run_serve_command(argv: list[str]) -> None:
+    from codex_graph import mcp_server
+
+    parser = argparse.ArgumentParser(
+        prog="graphnav serve",
+        description="Run the graphnav MCP server (stdio) so AI agents can call the graph tools natively",
+    )
+    parser.add_argument("--root", default=".", metavar="PATH", help="Repo root (default: current directory)")
+    parser.add_argument("--config", default=None, metavar="PATH", help="Path to config.toml")
+    args = parser.parse_args(argv)
+    sys.exit(mcp_server.serve(root=args.root, config_path=args.config))
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("map", "watch"):
         _run_mono_command(sys.argv[1], sys.argv[2:])
@@ -145,7 +165,10 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "context":
         _run_context_command(sys.argv[2:])
         return
-    if len(sys.argv) > 1 and sys.argv[1] in ("find", "neighbors"):
+    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+        _run_serve_command(sys.argv[2:])
+        return
+    if len(sys.argv) > 1 and sys.argv[1] in ("find", "neighbors", "impact"):
         _run_graph_query_command(sys.argv[1], sys.argv[2:])
         return
 
@@ -156,8 +179,11 @@ def main() -> None:
             "First-run (after pip install): just run 'graphnav' or 'graphnav map'\n"
             "in your monorepo root — services are auto-detected and graphs are built.\n\n"
             "Subcommands:\n"
-            "  map    Build per-service graphs and cross-service bridge notes\n"
-            "  watch  Keep graphs and bridge notes up-to-date as files change"
+            "  map      Build per-service graphs and cross-service bridge notes\n"
+            "  watch    Keep graphs and bridge notes up-to-date as files change\n"
+            "  context  Print a token-budgeted context pack for a task (free, no LLM)\n"
+            "  serve    Run the MCP server so AI agents call the graph tools natively\n"
+            "  find     Find symbols by query; neighbors/impact show a symbol's blast radius"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

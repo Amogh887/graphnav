@@ -128,6 +128,49 @@ Press `Ctrl-C` to stop cleanly.
 
 ---
 
+### `graphnav serve` (MCP server)
+
+Runs an [MCP](https://modelcontextprotocol.io) server over stdio so AI agents call the graph tools **natively** — no need to remember to run `context` by hand. The graph is loaded once and reused across calls.
+
+```
+pip install 'graphnav[mcp]'
+graphnav serve [--root PATH]
+```
+
+Exposes five tools:
+
+| Tool | Use |
+|---|---|
+| `graph_context(task)` | Minimal context pack with relevant code inline — the first-resort tool |
+| `graph_find(query)` | Find symbols by query → `file:line` |
+| `graph_neighbors(symbol)` | A symbol's callers and callees |
+| `read_region(path, start, end)` | Read a line range instead of a whole file |
+| `impact(symbol)` | Blast radius: who breaks if you change this symbol |
+
+Register it with any MCP client. For Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "graphnav": { "command": "graphnav", "args": ["serve", "--root", "."] }
+  }
+}
+```
+
+---
+
+### `graphnav find` / `neighbors` / `impact`
+
+Quick graph queries from the shell (no LLM):
+
+```
+graphnav find "rate limit"          # symbols matching a query → file:line
+graphnav neighbors create_incident  # callers + callees
+graphnav impact rate_limiter        # blast radius before changing a symbol
+```
+
+---
+
 ### `graphnav` (no subcommand)
 
 If run with no arguments in a monorepo root, auto-detects services and runs `map` automatically. If a prompt is given, falls through to the context-injection path for the Codex CLI.
