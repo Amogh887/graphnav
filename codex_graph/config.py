@@ -18,6 +18,7 @@ class QueryConfig:
     community_boost_weight: float = 2.0
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
+    edge_boost_weight: float = 0.4
 
 
 @dataclass
@@ -72,6 +73,7 @@ def _apply_toml(cfg: Config, data: dict) -> Config:
             community_boost_weight=q.get("community_boost_weight", cfg.query.community_boost_weight),
             bm25_k1=q.get("bm25_k1", cfg.query.bm25_k1),
             bm25_b=q.get("bm25_b", cfg.query.bm25_b),
+            edge_boost_weight=q.get("edge_boost_weight", cfg.query.edge_boost_weight),
         )
     if "context" in data:
         c = data["context"]

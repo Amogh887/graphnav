@@ -79,6 +79,28 @@ class GraphIndex:
         self.file_tokens: dict[str, list[str]] = defaultdict(list)
         self.file_communities: dict[str, set[int]] = defaultdict(set)
         self.community_tokens: dict[int, set[str]] = defaultdict(set)
+        self.file_neighbors: dict[str, set[str]] = defaultdict(set)
+
+        id2file: dict[object, str] = {}
+        for n in nodes:
+            nid = n.get("id")
+            sf = n.get("source_file", "")
+            if (
+                nid is not None and sf
+                and not any(p in sf for p in skip_patterns)
+                and _is_rankable(sf)
+            ):
+                id2file[nid] = sf
+
+        links = graph.get("links")
+        if links is None:
+            links = graph.get("edges", [])
+        for e in links or []:
+            s = id2file.get(e.get("source"))
+            t = id2file.get(e.get("target"))
+            if s and t and s != t:
+                self.file_neighbors[s].add(t)
+                self.file_neighbors[t].add(s)
 
         for n in nodes:
             sf = n.get("source_file", "")
@@ -146,15 +168,26 @@ class GraphIndex:
         bm25_k1: float,
         bm25_b: float,
         keep_ratio: float = 0.3,
+        edge_boost_weight: float = 0.4,
     ) -> list[RankedFile]:
         qtoks = _tokenize(prompt)
         if not qtoks:
             return []
-        scores = {
+        base = {
             sf: self._bm25(qtoks, sf, bm25_k1, bm25_b)
             + self._community_boost(qtoks, sf, community_boost_weight)
             for sf in self.file_tokens
         }
+        if edge_boost_weight > 0 and self.file_neighbors:
+            scores = {
+                sf: sc + edge_boost_weight * max(
+                    (base.get(n, 0.0) for n in self.file_neighbors.get(sf, ())),
+                    default=0.0,
+                )
+                for sf, sc in base.items()
+            }
+        else:
+            scores = base
         ranked = sorted(scores.items(), key=lambda x: -x[1])
         if not ranked or ranked[0][1] <= 0:
             return []
@@ -183,5 +216,8 @@ def query_files(
     bm25_k1: float = 1.5,
     bm25_b: float = 0.75,
     keep_ratio: float = 0.3,
+    edge_boost_weight: float = 0.4,
 ) -> list[RankedFile]:
-    return index.rank(prompt, top_k, community_boost_weight, bm25_k1, bm25_b, keep_ratio)
+    return index.rank(
+        prompt, top_k, community_boost_weight, bm25_k1, bm25_b, keep_ratio, edge_boost_weight
+    )

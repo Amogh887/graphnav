@@ -254,9 +254,14 @@ watch_poll_interval = 3.0          # seconds between mtime checks in watch mode
 context_budget_tokens = 2000       # token budget for graphnav context output
 context_top_files = 8              # max files returned by context command
 
+[query]
+edge_boost_weight = 0.4            # boost files connected to high-ranking files via call edges (0 disables)
+
 [graph]
 skip_patterns = ["node_modules", ".git", "graphify-out", "playwright-report"]
 ```
+
+Ranking is BM25 over graph symbols, plus a community boost, plus **call-edge expansion**: a file connected to a strong match gets pulled in even when its own text doesn't match the query (e.g. the endpoint you must edit for a "rate limit" task, reached from the matching `rate_limiter` symbol). Set `edge_boost_weight = 0` to disable.
 
 ---
 

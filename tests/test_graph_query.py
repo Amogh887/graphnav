@@ -174,6 +174,31 @@ class TestGraphIndex:
         idx = self._make_index(tmp_path, nodes)
         assert "normalized" in idx.file_tokens["f.py"]
 
+    def test_file_neighbors_from_links(self, tmp_path):
+        nodes = [
+            {"id": "a", "label": "Foo", "source_file": "a.py", "file_type": "code", "community": 0},
+            {"id": "b", "label": "Bar", "source_file": "b.py", "file_type": "code", "community": 0},
+        ]
+        graph_path = tmp_path / "graph.json"
+        write_graph(graph_path, nodes=nodes, links=[{"source": "a", "target": "b", "relation": "calls"}])
+        idx = GraphIndex(str(graph_path), [])
+        assert "b.py" in idx.file_neighbors["a.py"]
+        assert "a.py" in idx.file_neighbors["b.py"]
+
+    def test_edge_boost_pulls_in_called_neighbor(self, tmp_path):
+        nodes = [
+            {"id": "a", "label": "rate limiter middleware", "source_file": "limits.py", "file_type": "code", "community": 0},
+            {"id": "b", "label": "create incident endpoint", "source_file": "views.py", "file_type": "code", "community": 0},
+        ]
+        graph_path = tmp_path / "graph.json"
+        write_graph(graph_path, nodes=nodes, links=[{"source": "a", "target": "b", "relation": "calls"}])
+        idx = GraphIndex(str(graph_path), [])
+
+        no_edges = [r.source_file for r in idx.rank("rate limiter", 10, 0.0, 1.5, 0.75, edge_boost_weight=0.0)]
+        with_edges = [r.source_file for r in idx.rank("rate limiter", 10, 0.0, 1.5, 0.75, edge_boost_weight=0.5)]
+        assert "views.py" not in no_edges
+        assert "views.py" in with_edges
+
 
 class TestLoadIndex:
     def test_raises_for_missing_file(self, tmp_path):

@@ -67,12 +67,13 @@ def _run_context_command(argv: list[str]) -> None:
 
     parser = argparse.ArgumentParser(
         prog="graphnav context",
-        description="Print a token-budgeted context pack (files + symbol locations + cross-service impact) for a coding task",
+        description="Print a token-budgeted context pack for a coding task. Defaults to inline code regions; use --locations-only for the file:line index.",
     )
     parser.add_argument("task", nargs="?", help="The coding task, in natural language")
     parser.add_argument("--root", default=".", metavar="PATH", help="Repo root (default: current directory)")
     parser.add_argument("--budget", type=int, default=None, metavar="N", help="Approx token budget for the pack")
     parser.add_argument("--files", type=int, default=None, metavar="N", help="Max number of files to include")
+    parser.add_argument("--locations-only", action="store_true", help="Emit file:line locations instead of inline code regions")
     parser.add_argument("--config", default=None, metavar="PATH", help="Path to config.toml")
     args = parser.parse_args(argv)
 
@@ -84,13 +85,21 @@ def _run_context_command(argv: list[str]) -> None:
         sys.exit(1)
 
     cfg = load_config(args.config)
-    pack = multirepo.build_context_pack(
-        root=args.root,
-        task=task,
-        top_files=args.files if args.files is not None else cfg.mono.context_top_files,
-        budget_tokens=args.budget if args.budget is not None else cfg.mono.context_budget_tokens,
-        skip_patterns=cfg.graph.skip_patterns,
-    )
+    if args.locations_only:
+        pack = multirepo.build_context_pack(
+            root=args.root,
+            task=task,
+            top_files=args.files if args.files is not None else cfg.mono.context_top_files,
+            budget_tokens=args.budget if args.budget is not None else cfg.mono.context_budget_tokens,
+            skip_patterns=cfg.graph.skip_patterns,
+        )
+    else:
+        kwargs = {"root": args.root, "task": task, "skip_patterns": cfg.graph.skip_patterns}
+        if args.files is not None:
+            kwargs["top_files"] = args.files
+        if args.budget is not None:
+            kwargs["budget_tokens"] = args.budget
+        pack = multirepo.build_context_pack_inline(**kwargs)
     print(pack)
     sys.exit(0)
 
@@ -238,6 +247,7 @@ def main() -> None:
             cfg.query.community_boost_weight,
             cfg.query.bm25_k1,
             cfg.query.bm25_b,
+            edge_boost_weight=cfg.query.edge_boost_weight,
         )
 
     if args.list_files:

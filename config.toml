@@ -8,6 +8,7 @@ top_k = 5
 community_boost_weight = 2.0
 bm25_k1 = 1.5
 bm25_b = 0.75
+edge_boost_weight = 0.4
 
 [context]
 max_file_chars = 8000
