@@ -3,14 +3,14 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "repomap"
+name = "graphnav"
 version = "0.1.0"
 description = "Knowledge-graph context injection for AI coding agents in monorepos"
 requires-python = ">=3.11"
 dependencies = ["graphifyy>=0.8"]
 
 [project.scripts]
-repomap = "codex_graph.cli:main"
+graphnav = "codex_graph.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "anthropic>=0.40"]
