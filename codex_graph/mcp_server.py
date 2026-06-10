@@ -101,8 +101,8 @@ def serve(root: str = ".", config_path: str | None = None) -> int:
         from mcp.server.fastmcp import FastMCP
     except ImportError:
         print(
-            "MCP support is not installed. Install it with:\n"
-            "  pip install 'graphnav[mcp]'",
+            "Could not import the 'mcp' package (a core dependency of graphnav).\n"
+            "Reinstall graphnav, or install it directly with: pip install 'mcp>=1.2'",
             file=sys.stderr,
         )
         return 1

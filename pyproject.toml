@@ -7,14 +7,13 @@ name = "graphnav"
 version = "0.1.0"
 description = "Knowledge-graph context injection for AI coding agents in monorepos"
 requires-python = ">=3.11"
-dependencies = ["graphifyy>=0.8"]
+dependencies = ["graphifyy>=0.8", "mcp>=1.2"]
 
 [project.scripts]
 graphnav = "codex_graph.cli:main"
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.2"]
-dev = ["pytest>=8", "anthropic>=0.40", "mcp>=1.2"]
+dev = ["pytest>=8", "anthropic>=0.40"]
 
 [tool.setuptools.packages.find]
 where = ["."]

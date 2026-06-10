@@ -132,10 +132,9 @@ Press `Ctrl-C` to stop cleanly.
 
 ### `graphnav serve` (MCP server)
 
-Runs an [MCP](https://modelcontextprotocol.io) server over stdio so AI agents call the graph tools **natively** — no need to remember to run `context` by hand. The graph is loaded once and reused across calls.
+Runs an [MCP](https://modelcontextprotocol.io) server over stdio so AI agents call the graph tools **natively** — no need to remember to run `context` by hand. The graph is loaded once and reused across calls. The MCP runtime ships with graphnav, so this works on a plain `pip install graphnav`.
 
 ```
-pip install 'graphnav[mcp]'
 graphnav serve [--root PATH]
 ```
 
