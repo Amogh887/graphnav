@@ -181,7 +181,7 @@ def run_extract(
     timeout: int = 600,
     env: dict[str, str] | None = None,
 ) -> int:
-    print(f"[codex-graph] extracting {service.name} ...", file=sys.stderr)
+    print(f"[graphnav] extracting {service.name} ...", file=sys.stderr)
     proc = subprocess.Popen(
         [graphify_path, "extract", service.abs_path, "--backend", backend, "--out", service.abs_path],
         stdout=subprocess.PIPE,
@@ -400,8 +400,9 @@ def write_monorepo_map(root: str, services: list[ServiceInfo]) -> str:
     return path
 
 
-_BLOCK_START = "<!-- codex-graph:start -->"
-_BLOCK_END = "<!-- codex-graph:end -->"
+_BLOCK_START = "<!-- graphnav:start -->"
+_BLOCK_END = "<!-- graphnav:end -->"
+_LEGACY_MARKERS = (("<!-- codex-graph:start -->", "<!-- codex-graph:end -->"),)
 
 
 def build_playbook_text(root: str, services: list[ServiceInfo]) -> str:
@@ -423,7 +424,7 @@ def build_playbook_text(root: str, services: list[ServiceInfo]) -> str:
         "Just make it — no further graphify steps needed.",
         "- Everything else — including code changes, explanations, architecture questions, "
         '"how does X work", overviews, or anything touching unfamiliar files:',
-        '  1. Run `codex-graph context "<task>"` — prints the minimal files, their symbol '
+        '  1. Run `graphnav context "<task>"` — prints the minimal files, their symbol '
         "`file:line` locations, and any cross-service impact.",
         "  2. Open ONLY those files; read the given `file:line` regions, not whole files.",
         '  3. Before changing a symbol flagged "Cross-service impact", run '
@@ -451,9 +452,16 @@ def _write_managed_block(path: str, content: str) -> None:
         except OSError:
             existing = ""
 
-    if _BLOCK_START in existing and _BLOCK_END in existing:
-        before = existing.split(_BLOCK_START, 1)[0]
-        after = existing.split(_BLOCK_END, 1)[1]
+    start_marker, end_marker = _BLOCK_START, _BLOCK_END
+    if not (start_marker in existing and end_marker in existing):
+        for legacy_start, legacy_end in _LEGACY_MARKERS:
+            if legacy_start in existing and legacy_end in existing:
+                start_marker, end_marker = legacy_start, legacy_end
+                break
+
+    if start_marker in existing and end_marker in existing:
+        before = existing.split(start_marker, 1)[0]
+        after = existing.split(end_marker, 1)[1]
         new_content = before + block.rstrip("\n") + after
     elif existing.strip():
         new_content = existing.rstrip("\n") + "\n\n" + block
@@ -490,7 +498,7 @@ def build_context_pack(
         return (
             f"# Context for: {task}\n\n"
             f"No knowledge graph found at {rel}.\n"
-            "Run `codex-graph map` (monorepo) or `graphify extract .` first.\n"
+            "Run `graphnav map` (monorepo) or `graphify extract .` first.\n"
         )
 
     if skip_patterns is None:
@@ -701,7 +709,7 @@ def run_map(
     env = _build_subprocess_env(root)
     overarching_path = _overarching_graph_path(root)
 
-    print(f"[codex-graph] Building overarching graph across {len(services)} service(s): {', '.join(s.name for s in services)}", file=sys.stderr)
+    print(f"[graphnav] Building overarching graph across {len(services)} service(s): {', '.join(s.name for s in services)}", file=sys.stderr)
     rc = build_overarching_graph(root, graphify_path, backend, env=env)
     if rc != 0 or not os.path.exists(overarching_path):
         print(f"Error: overarching graphify extraction failed (exit {rc}).", file=sys.stderr)
@@ -742,7 +750,7 @@ def run_watch(
     overarching_path = _overarching_graph_path(root)
 
     if not os.path.exists(overarching_path):
-        print(f"[codex-graph] Bootstrapping overarching graph for {len(services)} service(s) ...", file=sys.stderr)
+        print(f"[graphnav] Bootstrapping overarching graph for {len(services)} service(s) ...", file=sys.stderr)
         rc = build_overarching_graph(root, graphify_path, backend, env=env)
         if rc != 0 or not os.path.exists(overarching_path):
             print(f"Error: bootstrap extraction failed (exit {rc}).", file=sys.stderr)
@@ -764,7 +772,7 @@ def run_watch(
     except OSError:
         last_mtime = 0.0
 
-    print(f"[codex-graph] Watching {root} ({len(services)} service(s)). Press Ctrl-C to stop.", file=sys.stderr)
+    print(f"[graphnav] Watching {root} ({len(services)} service(s)). Press Ctrl-C to stop.", file=sys.stderr)
     try:
         while True:
             time.sleep(mono_cfg.watch_poll_interval)
@@ -776,15 +784,15 @@ def run_watch(
             if mtime != last_mtime:
                 last_mtime = mtime
                 ts = time.strftime("%H:%M:%S")
-                print(f"[codex-graph] {ts} graph updated — re-partitioning and re-analyzing bridges ...", file=sys.stderr)
+                print(f"[graphnav] {ts} graph updated — re-partitioning and re-analyzing bridges ...", file=sys.stderr)
                 _refresh(root, services, overarching_path)
 
             if watch_proc.poll() is not None:
-                print(f"[codex-graph] WARNING: graphify watch exited (exit {watch_proc.returncode}), restarting ...", file=sys.stderr)
+                print(f"[graphnav] WARNING: graphify watch exited (exit {watch_proc.returncode}), restarting ...", file=sys.stderr)
                 watch_proc = _start_watch()
 
     except KeyboardInterrupt:
-        print("\n[codex-graph] Stopping watch ...", file=sys.stderr)
+        print("\n[graphnav] Stopping watch ...", file=sys.stderr)
         watch_proc.terminate()
         try:
             watch_proc.wait(timeout=5)

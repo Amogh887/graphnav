@@ -145,7 +145,7 @@ class TestAutoMap:
             main()
         assert exc.value.code == 1
         out = capsys.readouterr().out
-        assert "codex-graph" in out
+        assert "graphnav" in out
 
 
 class TestExistingPromptPathUnaffected:

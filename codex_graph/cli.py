@@ -14,7 +14,7 @@ def _run_mono_command(cmd: str, argv: list[str]) -> None:
     from codex_graph import multirepo
 
     parser = argparse.ArgumentParser(
-        prog=f"codex-graph {cmd}",
+        prog=f"graphnav {cmd}",
         description={
             "map": "Build per-service graphs and cross-service bridge notes for a monorepo",
             "watch": "Watch for file changes and keep per-service graphs and bridge notes up-to-date",
@@ -56,8 +56,8 @@ def _auto_map_if_needed(cfg_path: str | None) -> None:
         return
 
     names = ", ".join(s.name for s in services)
-    print(f"[codex-graph] Detected {len(services)} service(s): {names}")
-    print(f"[codex-graph] Running 'codex-graph map' to build knowledge graphs ...", file=sys.stderr)
+    print(f"[graphnav] Detected {len(services)} service(s): {names}")
+    print(f"[graphnav] Running 'graphnav map' to build knowledge graphs ...", file=sys.stderr)
     rc = multirepo.run_map(root=root, mono_cfg=cfg.mono)
     sys.exit(rc)
 
@@ -66,7 +66,7 @@ def _run_context_command(argv: list[str]) -> None:
     from codex_graph import multirepo
 
     parser = argparse.ArgumentParser(
-        prog="codex-graph context",
+        prog="graphnav context",
         description="Print a token-budgeted context pack (files + symbol locations + cross-service impact) for a coding task",
     )
     parser.add_argument("task", nargs="?", help="The coding task, in natural language")
@@ -99,7 +99,7 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
     from codex_graph import multirepo
     from codex_graph.graph_nav import GraphNav
 
-    parser = argparse.ArgumentParser(prog=f"codex-graph {kind}")
+    parser = argparse.ArgumentParser(prog=f"graphnav {kind}")
     parser.add_argument("term", nargs="?", help="query (find) or symbol (neighbors)")
     parser.add_argument("--root", default=".", metavar="PATH")
     parser.add_argument("--config", default=None, metavar="PATH")
@@ -111,7 +111,7 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
     cfg = load_config(args.config)
     graph_path = multirepo._overarching_graph_path(os.path.abspath(args.root))
     if not os.path.exists(graph_path):
-        print(f"Error: no knowledge graph at {graph_path}. Run `codex-graph map` first.", file=sys.stderr)
+        print(f"Error: no knowledge graph at {graph_path}. Run `graphnav map` first.", file=sys.stderr)
         sys.exit(2)
     nav = GraphNav(graph_path, cfg.graph.skip_patterns)
 
@@ -150,10 +150,10 @@ def main() -> None:
         return
 
     parser = argparse.ArgumentParser(
-        prog="codex-graph",
+        prog="graphnav",
         description=(
             "Codex CLI with knowledge-graph context injection for monorepos.\n\n"
-            "First-run (after pip install): just run 'codex-graph' or 'codex-graph map'\n"
+            "First-run (after pip install): just run 'graphnav' or 'graphnav map'\n"
             "in your monorepo root — services are auto-detected and graphs are built.\n\n"
             "Subcommands:\n"
             "  map    Build per-service graphs and cross-service bridge notes\n"

@@ -107,10 +107,11 @@ def load_config(explicit_path: str | None = None) -> Config:
     if explicit_path:
         candidates = [explicit_path]
     else:
-        env_path = os.environ.get("CODEX_GRAPH_CONFIG")
+        env_path = os.environ.get("GRAPHNAV_CONFIG") or os.environ.get("CODEX_GRAPH_CONFIG")
         if env_path:
             candidates.append(env_path)
         candidates.append(os.path.join(os.getcwd(), "config.toml"))
+        candidates.append(os.path.expanduser("~/.graphnav/config.toml"))
         candidates.append(os.path.expanduser("~/.codex-graph/config.toml"))
 
     for path in candidates:

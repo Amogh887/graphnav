@@ -810,7 +810,7 @@ class TestWriteCopilotInstructions:
     def test_directs_to_context_command(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
         path = write_copilot_instructions(str(tmp_path), [svc])
-        assert "codex-graph context" in Path(path).read_text()
+        assert "graphnav context" in Path(path).read_text()
 
     def test_leads_with_skip_gate(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
@@ -823,21 +823,21 @@ class TestWriteCopilotInstructions:
         write_copilot_instructions(str(tmp_path), [svc])
         agents = tmp_path / "AGENTS.md"
         assert agents.exists()
-        assert "codex-graph context" in agents.read_text()
+        assert "graphnav context" in agents.read_text()
 
     def test_also_writes_claude_md(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
         write_copilot_instructions(str(tmp_path), [svc])
         claude_md = tmp_path / "CLAUDE.md"
         assert claude_md.exists()
-        assert "codex-graph context" in claude_md.read_text()
+        assert "graphnav context" in claude_md.read_text()
 
     def test_wrapped_in_managed_block(self, tmp_path):
         svc = ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a/graphify-out/graph.json"))
         path = write_copilot_instructions(str(tmp_path), [svc])
         content = Path(path).read_text()
-        assert "<!-- codex-graph:start -->" in content
-        assert "<!-- codex-graph:end -->" in content
+        assert "<!-- graphnav:start -->" in content
+        assert "<!-- graphnav:end -->" in content
 
 
 # ── _write_managed_block ─────────────────────────────────────────────────────
@@ -847,7 +847,7 @@ class TestManagedBlock:
         p = str(tmp_path / "AGENTS.md")
         _write_managed_block(p, "HELLO")
         content = Path(p).read_text()
-        assert "<!-- codex-graph:start -->" in content
+        assert "<!-- graphnav:start -->" in content
         assert "HELLO" in content
 
     def test_preserves_existing_user_content(self, tmp_path):
@@ -869,7 +869,22 @@ class TestManagedBlock:
         assert "keep me" in content
         assert "SECOND" in content
         assert "FIRST" not in content
-        assert content.count("<!-- codex-graph:start -->") == 1
+        assert content.count("<!-- graphnav:start -->") == 1
+
+    def test_migrates_legacy_marker_in_place(self, tmp_path):
+        p = tmp_path / "AGENTS.md"
+        p.write_text(
+            "# My rules\nkeep me\n\n"
+            "<!-- codex-graph:start -->\nOLD\n<!-- codex-graph:end -->\n"
+        )
+        _write_managed_block(str(p), "NEW")
+        content = p.read_text()
+        assert "# My rules" in content
+        assert "keep me" in content
+        assert "NEW" in content
+        assert "OLD" not in content
+        assert "<!-- codex-graph:start -->" not in content
+        assert content.count("<!-- graphnav:start -->") == 1
 
 
 # ── build_playbook_text ──────────────────────────────────────────────────────
