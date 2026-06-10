@@ -197,6 +197,66 @@ def _overarching_graph_path(root: str) -> str:
     return os.path.join(root, "graphify-out", "graph.json")
 
 
+def _graph_meta_path(root: str) -> str:
+    return os.path.join(root, "graphify-out", ".graphnav-meta.json")
+
+
+def _git_sha(root: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", root, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def _commits_between(root: str, a: str, b: str) -> int:
+    try:
+        out = subprocess.run(
+            ["git", "-C", root, "rev-list", "--count", f"{a}..{b}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            return int(out.stdout.strip() or 0)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return 0
+
+
+def write_graph_meta(root: str) -> None:
+    meta = {"built_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "git_sha": _git_sha(root)}
+    path = _graph_meta_path(root)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+
+def staleness_note(root: str) -> str:
+    path = _graph_meta_path(root)
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path) as f:
+            meta = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return ""
+    built_sha = meta.get("git_sha")
+    current = _git_sha(root)
+    if not built_sha or not current or built_sha == current:
+        return ""
+    behind = _commits_between(root, built_sha, current)
+    span = f"{behind} commit(s)" if behind else "some commits"
+    return (
+        f"> ⚠️ Knowledge graph is stale: built at {built_sha[:8]}, HEAD is now "
+        f"{current[:8]} ({span} later). Line numbers may have drifted — "
+        "re-run `graphnav map`."
+    )
+
+
 def _overarching_service(root: str) -> ServiceInfo:
     return ServiceInfo(
         name="overarching (whole repo)",
@@ -428,7 +488,7 @@ def build_playbook_text(root: str, services: list[ServiceInfo]) -> str:
         "`file:line` locations, and any cross-service impact.",
         "  2. Open ONLY those files; read the given `file:line` regions, not whole files.",
         '  3. Before changing a symbol flagged "Cross-service impact", run '
-        '`graphify affected "<symbol>"`.',
+        '`graphnav impact "<symbol>"` to see its blast radius (callers/callees).',
         "  4. Implement (or answer), then run the project's tests if code changed.",
         "",
         "**Never** use `find`/`ls`/`cat` to survey the repo. If graphify doesn't give "
@@ -519,6 +579,9 @@ def build_context_pack(
     selected = [rf.source_file for rf in ranked]
 
     out_lines = [f"# Context for: {task}", ""]
+    note = staleness_note(root)
+    if note:
+        out_lines += [note, ""]
     if not selected:
         out_lines.append(
             "_No matching files. Try terms from the code itself (function or class names)._"
@@ -613,11 +676,13 @@ def build_context_pack_inline(root, task, top_files=3, budget_tokens=2500, skip_
         graph = json.load(f)
     by_file = _symbols_by_file(graph)
 
-    out = [
-        f"# Context for: {task}",
-        "",
-        "## Relevant code (extracted from the knowledge graph — already in context, do not re-open these files)",
-    ]
+    out = [f"# Context for: {task}", ""]
+    note = staleness_note(root)
+    if note:
+        out += [note, ""]
+    out.append(
+        "## Relevant code (extracted from the knowledge graph — already in context, do not re-open these files)"
+    )
     if not ranked:
         out.append("_No confident matches; explore normally._")
         return "\n".join(out) + "\n"
@@ -678,6 +743,7 @@ def _refresh(
         write_symbols_md(svc)
     write_monorepo_map(root, services)
     write_copilot_instructions(root, services)
+    write_graph_meta(root)
     return bridges
 
 

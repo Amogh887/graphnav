@@ -83,11 +83,13 @@ What it does:
 
 ### `graphnav context`
 
-Prints a token-budgeted context pack for a coding task. **No LLM call — free and instant.**
+Prints a token-budgeted context pack for a coding task. **No LLM call — free and instant.** Defaults to inline code regions; pass `--locations-only` for a `file:line` index instead.
 
 ```
-graphnav context "<task>" [--root PATH] [--budget N] [--files N]
+graphnav context "<task>" [--root PATH] [--budget N] [--files N] [--locations-only]
 ```
+
+If the graph was built on an older commit than the current `HEAD`, the pack is prefixed with a staleness warning (it tracks the build-time git SHA in `graphify-out/.graphnav-meta.json`) so drifted line numbers don't silently mislead the agent.
 
 | Flag | Default | Description |
 |---|---|---|
