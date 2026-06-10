@@ -306,3 +306,9 @@ The generated `CLAUDE.md`, `AGENTS.md`, and `.github/copilot-instructions.md` ca
 - Python ≥ 3.11
 - `graphifyy` ≥ 0.8 (installed automatically)
 - An API key for your chosen LLM backend (only needed for `map` / `watch`; `context` is free)
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Amogh Rao
