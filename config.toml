@@ -9,6 +9,17 @@ community_boost_weight = 2.0
 bm25_k1 = 1.5
 bm25_b = 0.75
 edge_boost_weight = 0.4
+recency_boost_weight = 0.2
+
+[query.edge_relation_weights]
+calls = 1.0
+inherits = 1.0
+imports = 0.6
+imports_from = 0.6
+method = 0.6
+contains = 0.6
+references = 0.3
+uses = 0.3
 
 [context]
 max_file_chars = 8000
@@ -20,3 +31,10 @@ subcommand = "exec"
 extra_args = []
 inject_via = "stdin"
 timeout_seconds = 300
+
+[mono]
+graphify_backend = "claude"
+watch_poll_interval = 3.0
+context_budget_tokens = 2000
+context_top_files = 8
+extra_skip_dirs = []

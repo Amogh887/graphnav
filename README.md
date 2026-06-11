@@ -1,18 +1,29 @@
-# graphnav
+# GraphNav: Leveraging Graphify for Token-Cheap AI Coding in Monorepos
 
-**Token-cheap AI coding for monorepos.** Builds a graphify knowledge graph of your codebase, then gives every AI coding agent (GitHub Copilot, Claude Code, OpenAI Codex) a minimal, targeted context pack instead of the whole repo.
+**GraphNav** gives every AI coding agent (GitHub Copilot, Claude Code, OpenAI Codex) a minimal, targeted context pack instead of the whole repo. It is built on **[Graphify](https://pypi.org/project/graphifyy/)**: GraphNav extracts a Graphify knowledge graph of your codebase once, then serves each agent only the files and `file:line` locations relevant to the current task — so agents stop burning tokens on `find`/`ls`/`cat` exploration. What makes GraphNav unique is that it extracts a **single overarching Graphify graph** across the entire monorepo (not one graph per service), letting it surface call edges that cross service boundaries — something per-service extraction can never do.
 
 ---
 
-## The problem
+## Why GraphNav
 
 AI coding agents default to exploring the filesystem with `find`/`ls`/`cat`, reading entire files, and burning tokens on irrelevant code. In a monorepo this compounds: every request pulls context from every service.
 
-graphnav solves this by:
+GraphNav solves this by:
 
 1. Extracting a knowledge graph (symbols, call edges, cross-service links) once, up front
 2. Giving agents a **one-command retrieval path** that returns only the files and `file:line` locations relevant to the current task
 3. Writing instruction files that explicitly direct agents to use retrieval first — and ban raw filesystem exploration
+
+---
+
+## GraphNav Core Features
+
+- **Token-budgeted context packs** — `graphnav context "<task>"` returns only the relevant code, inline, with no LLM call.
+- **Native MCP tools** — `graphnav serve` exposes the graph to agents over the Model Context Protocol, refreshed automatically when the graph changes.
+- **Graph-aware ranking** — BM25 plus relation-weighted call-edge expansion and a git-recency nudge, so the file you actually need to edit surfaces even when its text doesn't match the query.
+- **Fuzzy symbol search** — `find`/`neighbors`/`impact` fall back to closest-match symbols when an exact lookup misses a typo.
+- **Cross-service bridges** — a single overarching Graphify graph exposes call edges that cross service boundaries.
+- **Self-diagnosing** — `graphnav doctor` validates the whole setup in one command.
 
 ---
 
@@ -127,13 +138,13 @@ Long-running daemon. Watches the repo for file changes and keeps all graphs, sym
 graphnav watch [--root PATH] [--backend BACKEND]
 ```
 
-Press `Ctrl-C` to stop cleanly.
+It only rewrites generated artifacts (`SYMBOLS.md`, `BRIDGES.md`, per-service graphs, agent instructions) when their content actually changes, so it won't churn file mtimes and retrigger your editor or agents. A change is acted on after one quiet poll (debounce), and if the underlying `graphify watch` process dies it is restarted with exponential backoff (1s → 2s → … capped at 60s). Press `Ctrl-C` to stop cleanly.
 
 ---
 
 ### `graphnav serve` (MCP server)
 
-Runs an [MCP](https://modelcontextprotocol.io) server over stdio so AI agents call the graph tools **natively** — no need to remember to run `context` by hand. The graph is loaded once and reused across calls. The MCP runtime ships with graphnav, so this works on a plain `pip install graphnav`.
+Runs an [MCP](https://modelcontextprotocol.io) server over stdio so AI agents call the graph tools **natively** — no need to remember to run `context` by hand. The graph is loaded once and cached, then automatically reloaded whenever `graph.json` changes (e.g. after a `map` or while `watch` runs), so a long-lived server never serves stale line numbers. The MCP runtime ships with GraphNav, so this works on a plain `pip install graphnav`.
 
 ```
 graphnav serve [--root PATH]
@@ -171,6 +182,32 @@ graphnav neighbors create_incident  # callers + callees
 graphnav impact rate_limiter        # blast radius before changing a symbol
 ```
 
+If an exact lookup finds nothing (e.g. a typo like `create_incdnet`), GraphNav falls back to the closest-matching symbols and flags the result so you know it's a guess.
+
+---
+
+### `graphnav doctor`
+
+Diagnoses a GraphNav setup in one command — run it when something isn't working. No LLM call.
+
+```
+graphnav doctor [--root PATH] [--config PATH]
+```
+
+It checks the `graphify` binary, the config file (and reports any validation warnings), the graph's existence/validity and staleness, whether an API key is discoverable for your backend, the detected services, and the index cache. It exits non-zero only if a check **fails** (warnings don't):
+
+```
+  [ok] graphify binary — /usr/local/bin/graphify (graphify 0.8.2)
+  [ok] config — /repo/config.toml
+  [ok] graph.json — 1843 nodes, 5120 links
+  [warn] graph meta — graph is behind HEAD — re-run `graphnav map`
+  [ok] API key — found in environment ($ANTHROPIC_API_KEY)
+  [ok] services — 3 detected: api, backend, web
+  [ok] index cache — warm
+
+6 ok, 1 warn, 0 fail
+```
+
 ---
 
 ### `graphnav` (no subcommand)
@@ -186,7 +223,7 @@ graphnav detects a subdirectory as a service if it contains:
 - A marker file: `package.json`, `pyproject.toml`, `requirements.txt`, `go.mod`, `Cargo.toml`, `tsconfig.json`, `Gemfile`, and more, **or**
 - Any source code files (`.py`, `.ts`, `.tsx`, `.js`, `.go`, `.rs`, `.java`, etc.)
 
-Skipped automatically: `node_modules`, `dist`, `build`, `graphify-out`, `__pycache__`, `.git`, dotdirs, and other non-source directories.
+Skipped automatically: `node_modules`, `dist`, `build`, `graphify-out`, `__pycache__`, `.git`, dotdirs, and other non-source directories. Add your own names via `extra_skip_dirs` in `[mono]`.
 
 ---
 
@@ -243,6 +280,10 @@ Overview of all services and which services each connects to.
 | eval | eval/graphify-out/graph.json | backend |
 ```
 
+### `graphify-out/.graphnav-cache.pkl`
+
+An auto-managed cache of the parsed graph index so repeated `find`/`context`/`neighbors`/`impact` calls don't re-parse `graph.json` every time. It is rebuilt automatically whenever `graph.json` changes and is safe to delete at any time. Keep `graphify-out/` gitignored. The cache lives inside your own repo's output directory; loading it is no more trusting than running the rest of the tool, since anyone who could plant a malicious cache there could already rewrite `graph.json` or `CLAUDE.md`. Set `GRAPHNAV_NO_CACHE=1` to disable it.
+
 ---
 
 ## Configuration
@@ -255,21 +296,30 @@ graphify_backend = "claude"        # LLM backend for extraction
 watch_poll_interval = 3.0          # seconds between mtime checks in watch mode
 context_budget_tokens = 2000       # token budget for graphnav context output
 context_top_files = 8              # max files returned by context command
+extra_skip_dirs = []               # extra directory names to skip during service detection
 
 [query]
-edge_boost_weight = 0.4            # boost files connected to high-ranking files via call edges (0 disables)
+edge_boost_weight = 0.4            # boost files connected to high-ranking files via graph edges (0 disables)
+recency_boost_weight = 0.2         # nudge files touched in recent git commits higher (0 disables)
+
+# Per-relation weights for edge expansion (a "calls" edge counts more than "references")
+[query.edge_relation_weights]
+calls = 1.0
+inherits = 1.0
+imports = 0.6
+references = 0.3
 
 [graph]
 skip_patterns = ["node_modules", ".git", "graphify-out", "playwright-report"]
 ```
 
-Ranking is BM25 over graph symbols, plus a community boost, plus **call-edge expansion**: a file connected to a strong match gets pulled in even when its own text doesn't match the query (e.g. the endpoint you must edit for a "rate limit" task, reached from the matching `rate_limiter` symbol). Set `edge_boost_weight = 0` to disable.
+How Graphify enhances GraphNav ranking: it is BM25 over graph symbols, plus a community boost, plus **relation-weighted call-edge expansion** — a file connected to a strong match gets pulled in even when its own text doesn't match the query (e.g. the endpoint you must edit for a "rate limit" task, reached from the matching `rate_limiter` symbol), with `calls`/`inherits` edges weighted above `imports` above `references`. A **git-recency** signal then nudges recently-changed files up. Set `edge_boost_weight = 0` or `recency_boost_weight = 0` to disable either.
 
 ---
 
-## How cross-service bridges work
+## How Graphify Enhances GraphNav: Cross-Service Bridges
 
-graphnav extracts **one overarching graph** of the whole repo (not one per service). This means graphify's AST and semantic extraction can find call edges that cross service boundaries — something a per-service extraction followed by a union merge can never do.
+GraphNav extracts **one overarching Graphify graph** of the whole repo (not one per service). This means Graphify's AST and semantic extraction can find call edges that cross service boundaries — something a per-service extraction followed by a union merge can never do.
 
 The overarching graph is then partitioned into per-service local graphs for navigation. Bridges are derived from the overarching graph where an edge's endpoints belong to different services.
 
