@@ -21,6 +21,7 @@ from codex_graph.multirepo import (
     _write_managed_block,
     analyze_bridges,
     build_context_pack,
+    build_context_pack_inline,
     build_overarching_graph,
     build_playbook_text,
     detect_services,
@@ -1174,7 +1175,7 @@ class TestRunMap:
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
         roots_seen = []
 
-        def fake_detect(root, markers):
+        def fake_detect(root, markers, extra_skip_dirs=None):
             roots_seen.append(root)
             return []
 
@@ -1360,3 +1361,51 @@ class TestStaleness:
         from codex_graph.multirepo import build_context_pack_inline
         pack = build_context_pack_inline(root=str(tmp_path), task="incident")
         assert "stale" in pack
+
+
+class TestLoudPackErrors:
+    def _corrupt_graph(self, tmp_path) -> str:
+        out_dir = tmp_path / "graphify-out"
+        out_dir.mkdir()
+        (out_dir / "graph.json").write_text("{not json")
+        return str(tmp_path)
+
+    def test_locations_pack_reports_corrupt_graph(self, tmp_path, capsys):
+        pack = build_context_pack(self._corrupt_graph(tmp_path), "do something")
+        assert "could not be read" in pack
+        assert "graphnav map" in pack
+        assert "No matching files" not in pack
+        assert "[graphnav] warning:" in capsys.readouterr().err
+
+    def test_inline_pack_reports_corrupt_graph(self, tmp_path, capsys):
+        pack = build_context_pack_inline(self._corrupt_graph(tmp_path), "do something")
+        assert "could not be read" in pack
+        assert "No confident matches" not in pack
+        assert "[graphnav] warning:" in capsys.readouterr().err
+
+    def test_symbols_md_warns_on_corrupt_graph(self, tmp_path, capsys):
+        svc_dir = tmp_path / "svc"
+        (svc_dir / "graphify-out").mkdir(parents=True)
+        graph_path = svc_dir / "graphify-out" / "graph.json"
+        graph_path.write_text("{not json")
+        svc = ServiceInfo("svc", str(svc_dir), str(graph_path))
+        write_symbols_md(svc)
+        assert "[graphnav] warning:" in capsys.readouterr().err
+
+
+class TestDetectServicesExtraSkipDirs:
+    def test_extra_dir_excluded(self, tmp_path):
+        for name in ("svc", "sandbox"):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "pyproject.toml").touch()
+        services = detect_services(str(tmp_path), MonoConfig().marker_files, ["sandbox"])
+        assert [s.name for s in services] == ["svc"]
+
+    def test_no_extra_dirs_keeps_default_behavior(self, tmp_path):
+        for name in ("svc", "sandbox"):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "pyproject.toml").touch()
+        services = detect_services(str(tmp_path), MonoConfig().marker_files)
+        assert [s.name for s in services] == ["sandbox", "svc"]

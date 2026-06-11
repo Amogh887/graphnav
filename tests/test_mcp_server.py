@@ -85,3 +85,22 @@ class TestNoGraph:
 
     def test_neighbors_without_graph(self, tmp_path):
         assert "No knowledge graph" in GraphTools(str(tmp_path)).graph_neighbors("x")
+
+
+class TestNavFreshness:
+    def test_graph_rewrite_visible_without_restart(self, graph_root):
+        tools = GraphTools(str(graph_root))
+        assert "create_incident" in tools.graph_find("incident")
+        write_graph(
+            graph_root / "graphify-out" / "graph.json",
+            NODES + [{"id": "audit_log", "label": "audit_log", "source_file": "api/audit.py",
+                      "file_type": "code", "source_location": "L1", "community": 0}],
+            LINKS,
+        )
+        assert "audit_log" in tools.graph_find("audit")
+
+    def test_graph_deleted_returns_no_graph(self, graph_root):
+        tools = GraphTools(str(graph_root))
+        assert "create_incident" in tools.graph_find("incident")
+        (graph_root / "graphify-out" / "graph.json").unlink()
+        assert "No knowledge graph" in tools.graph_find("incident")

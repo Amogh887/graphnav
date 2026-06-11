@@ -6,7 +6,7 @@ import sys
 
 from codex_graph import CodexNotFoundError, CodexTimeoutError, GraphNotFoundError
 from codex_graph.config import load_config
-from codex_graph.graph_query import load_index, query_files
+from codex_graph.graph_query import query_files
 from codex_graph import runner
 
 
@@ -51,7 +51,7 @@ def _auto_map_if_needed(cfg_path: str | None) -> None:
 
     cfg = load_config(cfg_path)
     root = os.path.abspath(".")
-    services = multirepo.detect_services(root, cfg.mono.marker_files)
+    services = multirepo.detect_services(root, cfg.mono.marker_files, cfg.mono.extra_skip_dirs)
     if not services:
         return
 
@@ -92,9 +92,16 @@ def _run_context_command(argv: list[str]) -> None:
             top_files=args.files if args.files is not None else cfg.mono.context_top_files,
             budget_tokens=args.budget if args.budget is not None else cfg.mono.context_budget_tokens,
             skip_patterns=cfg.graph.skip_patterns,
+            query_cfg=cfg.query,
+            mono_cfg=cfg.mono,
         )
     else:
-        kwargs = {"root": args.root, "task": task, "skip_patterns": cfg.graph.skip_patterns}
+        kwargs = {
+            "root": args.root,
+            "task": task,
+            "skip_patterns": cfg.graph.skip_patterns,
+            "query_cfg": cfg.query,
+        }
         if args.files is not None:
             kwargs["top_files"] = args.files
         if args.budget is not None:
@@ -106,7 +113,7 @@ def _run_context_command(argv: list[str]) -> None:
 
 def _run_graph_query_command(kind: str, argv: list[str]) -> None:
     from codex_graph import multirepo
-    from codex_graph.graph_nav import GraphNav
+    from codex_graph.graph_cache import load_bundle
 
     parser = argparse.ArgumentParser(prog=f"graphnav {kind}")
     parser.add_argument("term", nargs="?", help="query (find) or symbol (neighbors)")
@@ -118,23 +125,30 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
         sys.exit(1)
 
     cfg = load_config(args.config)
-    graph_path = multirepo._overarching_graph_path(os.path.abspath(args.root))
+    root = os.path.abspath(args.root)
+    graph_path = multirepo._overarching_graph_path(root)
     if not os.path.exists(graph_path):
         print(f"Error: no knowledge graph at {graph_path}. Run `graphnav map` first.", file=sys.stderr)
         sys.exit(2)
-    nav = GraphNav(graph_path, cfg.graph.skip_patterns)
 
     if kind == "impact":
         from codex_graph.mcp_server import GraphTools
 
-        tools = GraphTools(os.path.abspath(args.root), cfg.graph.skip_patterns)
+        tools = GraphTools(root, cfg.graph.skip_patterns, query_cfg=cfg.query)
         print(tools.impact(args.term))
         sys.exit(0)
+
+    nav = load_bundle(
+        graph_path, cfg.graph.skip_patterns,
+        relation_weights=cfg.query.edge_relation_weights, repo_root=root,
+    ).nav
 
     if kind == "find":
         hits = nav.find_symbols(args.term, k=10)
         if not hits:
             print("(no matches)")
+        elif all(h.get("fuzzy") for h in hits):
+            print("(no exact match — closest symbols:)")
         for h in hits:
             print(f"{h['symbol']} — {h['file']}:{h['loc']}")
     else:
@@ -143,6 +157,8 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
             print("(symbol not found)")
             sys.exit(0)
         print(f"{r['symbol']} defined at {r['defined_at']}")
+        if r.get("fuzzy"):
+            print(f'(closest match for "{r["query"]}")')
         if r.get("callers"):
             print("callers:")
             for c in r["callers"]:
@@ -234,20 +250,28 @@ def main() -> None:
     if args.no_context:
         ranked = []
     else:
+        from codex_graph.graph_cache import load_bundle
+
         try:
-            index = load_index(graph_path, cfg.graph.skip_patterns)
+            bundle = load_bundle(
+                graph_path, cfg.graph.skip_patterns,
+                relation_weights=cfg.query.edge_relation_weights,
+                repo_root=project_root,
+            )
         except GraphNotFoundError as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(2)
 
         ranked = query_files(
             prompt,
-            index,
+            bundle.index,
             cfg.query.top_k,
             cfg.query.community_boost_weight,
             cfg.query.bm25_k1,
             cfg.query.bm25_b,
             edge_boost_weight=cfg.query.edge_boost_weight,
+            recency=bundle.recency,
+            recency_boost_weight=cfg.query.recency_boost_weight,
         )
 
     if args.list_files:

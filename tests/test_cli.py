@@ -123,7 +123,7 @@ class TestContextCommand:
     def test_context_forwards_budget_and_files(self, tmp_path, monkeypatch):
         captured = {}
 
-        def fake_pack(root, task, skip_patterns=None, top_files=None, budget_tokens=None):
+        def fake_pack(root, task, skip_patterns=None, top_files=None, budget_tokens=None, query_cfg=None):
             captured["top_files"] = top_files
             captured["budget_tokens"] = budget_tokens
             return ""
@@ -233,3 +233,39 @@ class TestExistingPromptPathUnaffected:
             from codex_graph.cli import main
             main()
         assert exc.value.code == 2
+
+
+class TestIndexCacheUsed:
+    def test_second_find_run_skips_index_build(self, tmp_path, monkeypatch, capsys):
+        import os
+
+        from codex_graph.cli import main
+        from codex_graph.graph_cache import cache_path_for, clear_memo
+        from codex_graph.graph_query import GraphIndex
+        from tests.conftest import write_graph
+
+        graph_path = tmp_path / "graphify-out" / "graph.json"
+        write_graph(graph_path, [
+            {"id": "create_incident", "label": "create_incident", "source_file": "api/views.py",
+             "file_type": "code", "source_location": "L2", "community": 0},
+        ], [])
+        argv = ["graphnav", "find", "incident", "--root", str(tmp_path)]
+        clear_memo()
+        monkeypatch.setattr(sys, "argv", argv)
+        with pytest.raises(SystemExit):
+            main()
+        assert os.path.exists(cache_path_for(str(graph_path)))
+        clear_memo()
+        calls = {"n": 0}
+        original = GraphIndex.__init__
+
+        def counting(self, *args, **kwargs):
+            calls["n"] += 1
+            original(self, *args, **kwargs)
+
+        monkeypatch.setattr(GraphIndex, "__init__", counting)
+        monkeypatch.setattr(sys, "argv", argv)
+        with pytest.raises(SystemExit):
+            main()
+        assert calls["n"] == 0
+        assert "create_incident" in capsys.readouterr().out

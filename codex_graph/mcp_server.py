@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import sys
 
-from codex_graph.config import load_config
+from codex_graph import GraphNotFoundError
+from codex_graph.config import QueryConfig, load_config
+from codex_graph.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
 from codex_graph.graph_nav import GraphNav
 from codex_graph.multirepo import _overarching_graph_path, build_context_pack_inline
 
@@ -24,31 +26,46 @@ def _safe_path(root: str, rel: str) -> str:
 
 
 class GraphTools:
-    def __init__(self, root: str, skip_patterns: list[str] | None = None):
+    def __init__(
+        self,
+        root: str,
+        skip_patterns: list[str] | None = None,
+        query_cfg: QueryConfig | None = None,
+    ):
         self.root = os.path.abspath(root)
-        self.skip_patterns = skip_patterns or [
-            "node_modules", ".git", "graphify-out", "dist", "build",
-            "playwright-report", "test-results", ".next", "coverage",
-        ]
+        self.skip_patterns = skip_patterns or list(DEFAULT_PACK_SKIP_PATTERNS)
+        self.query_cfg = query_cfg or QueryConfig()
         self.graph_path = _overarching_graph_path(self.root)
-        self._nav: GraphNav | None = None
 
     @property
     def nav(self) -> GraphNav | None:
-        if self._nav is None and os.path.exists(self.graph_path):
-            self._nav = GraphNav(self.graph_path, self.skip_patterns)
-        return self._nav
+        try:
+            return load_bundle(
+                self.graph_path,
+                self.skip_patterns,
+                relation_weights=self.query_cfg.edge_relation_weights,
+                repo_root=self.root,
+            ).nav
+        except GraphNotFoundError:
+            return None
 
     def graph_context(self, task: str) -> str:
         return build_context_pack_inline(
-            root=self.root, task=task, skip_patterns=self.skip_patterns
+            root=self.root, task=task, skip_patterns=self.skip_patterns,
+            query_cfg=self.query_cfg,
         )
 
     def graph_find(self, query: str) -> str:
         if self.nav is None:
             return _NO_GRAPH
         hits = self.nav.find_symbols(query, k=8)
-        return "\n".join(f"{h['symbol']} — {h['file']}:{h['loc']}" for h in hits) or "(no matches)"
+        if not hits:
+            return "(no matches)"
+        lines = []
+        if all(h.get("fuzzy") for h in hits):
+            lines.append("(no exact match — closest symbols:)")
+        lines += [f"{h['symbol']} — {h['file']}:{h['loc']}" for h in hits]
+        return "\n".join(lines)
 
     def graph_neighbors(self, symbol: str) -> str:
         if self.nav is None:
@@ -57,6 +74,8 @@ class GraphTools:
         if not r.get("found", True):
             return "(symbol not found)"
         parts = [f"{r['symbol']} defined at {r['defined_at']}"]
+        if r.get("fuzzy"):
+            parts.append(f'(closest match for "{r["query"]}")')
         if r.get("callers"):
             parts.append("callers:\n" + "\n".join("  " + c for c in r["callers"]))
         if r.get("callees"):
@@ -82,6 +101,8 @@ class GraphTools:
         if not r.get("found", True):
             return "(symbol not found)"
         out = [f"# Blast radius of {r['symbol']} (defined at {r['defined_at']})", ""]
+        if r.get("fuzzy"):
+            out.insert(1, f'(closest match for "{r["query"]}")')
         callers = r.get("callers") or []
         out.append("## Direct callers (break if you change the signature or behavior)")
         out.extend("- " + c for c in callers) if callers else out.append("_none found_")
@@ -108,7 +129,7 @@ def serve(root: str = ".", config_path: str | None = None) -> int:
         return 1
 
     cfg = load_config(config_path)
-    tools = GraphTools(os.path.abspath(root), cfg.graph.skip_patterns)
+    tools = GraphTools(os.path.abspath(root), cfg.graph.skip_patterns, query_cfg=cfg.query)
     server = FastMCP("graphnav")
 
     @server.tool()

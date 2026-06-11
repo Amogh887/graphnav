@@ -10,7 +10,11 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from codex_graph.config import MonoConfig
+from codex_graph.config import MonoConfig, QueryConfig
+
+
+def _warn(msg: str) -> None:
+    print(f"[graphnav] warning: {msg}", file=sys.stderr)
 
 
 SOURCE_EXTENSIONS = frozenset({
@@ -112,7 +116,7 @@ class BridgeRow:
     remote_loc: str = ""
 
 
-def _has_source_files(path: str, max_depth: int = 4) -> bool:
+def _has_source_files(path: str, max_depth: int = 4, skip_dirs: frozenset[str] = SKIP_DIRS) -> bool:
     base = path.rstrip(os.sep).count(os.sep)
     for dirpath, dirnames, filenames in os.walk(path):
         depth = dirpath.count(os.sep) - base
@@ -121,7 +125,7 @@ def _has_source_files(path: str, max_depth: int = 4) -> bool:
         else:
             dirnames[:] = [
                 d for d in dirnames
-                if d not in SKIP_DIRS and not d.startswith(".")
+                if d not in skip_dirs and not d.startswith(".")
             ]
         for fn in filenames:
             if os.path.splitext(fn)[1] in SOURCE_EXTENSIONS:
@@ -129,9 +133,14 @@ def _has_source_files(path: str, max_depth: int = 4) -> bool:
     return False
 
 
-def detect_services(root: str, marker_files: list[str]) -> list[ServiceInfo]:
+def detect_services(
+    root: str,
+    marker_files: list[str],
+    extra_skip_dirs: list[str] | None = None,
+) -> list[ServiceInfo]:
     services = []
     marker_set = set(marker_files)
+    skip_dirs = SKIP_DIRS | frozenset(extra_skip_dirs or ())
     try:
         entries = os.listdir(root)
     except OSError:
@@ -140,12 +149,12 @@ def detect_services(root: str, marker_files: list[str]) -> list[ServiceInfo]:
         abs_path = os.path.join(root, entry)
         if not os.path.isdir(abs_path):
             continue
-        if entry in SKIP_DIRS or entry.startswith("."):
+        if entry in skip_dirs or entry.startswith("."):
             continue
         has_marker = any(
             os.path.exists(os.path.join(abs_path, marker)) for marker in marker_set
         )
-        if has_marker or _has_source_files(abs_path):
+        if has_marker or _has_source_files(abs_path, skip_dirs=skip_dirs):
             services.append(ServiceInfo(
                 name=entry,
                 abs_path=abs_path,
@@ -426,7 +435,8 @@ def write_symbols_md(service: ServiceInfo) -> str:
     try:
         with open(service.graph_path) as f:
             graph = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        _warn(f"could not read {service.graph_path} ({type(exc).__name__}) — symbols index will be empty")
         graph = {"nodes": []}
 
     by_file = _symbols_by_file(graph, prefix_strip=service.name)
@@ -548,8 +558,11 @@ def build_context_pack(
     top_files: int = 8,
     budget_tokens: int = 2000,
     skip_patterns: list[str] | None = None,
+    query_cfg: QueryConfig | None = None,
+    mono_cfg: MonoConfig | None = None,
 ) -> str:
-    from codex_graph.graph_query import load_index, query_files
+    from codex_graph.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
+    from codex_graph.graph_query import query_files
 
     root = os.path.abspath(root)
     overarching_path = _overarching_graph_path(root)
@@ -562,26 +575,44 @@ def build_context_pack(
         )
 
     if skip_patterns is None:
-        skip_patterns = [
-            "node_modules", ".git", "graphify-out", "dist", "build",
-            "playwright-report", "test-results", ".next", "coverage",
-        ]
+        skip_patterns = list(DEFAULT_PACK_SKIP_PATTERNS)
+    if query_cfg is None:
+        query_cfg = QueryConfig()
+    if mono_cfg is None:
+        mono_cfg = MonoConfig()
 
+    degraded = False
     try:
-        index = load_index(overarching_path, skip_patterns)
-        ranked = query_files(task, index, top_files)
-    except Exception:
-        ranked = []
-
-    with open(overarching_path) as f:
-        graph = json.load(f)
-    by_file = _symbols_by_file(graph)
+        bundle = load_bundle(
+            overarching_path, skip_patterns,
+            relation_weights=query_cfg.edge_relation_weights, repo_root=root,
+        )
+        ranked = query_files(
+            task, bundle.index, top_files,
+            query_cfg.community_boost_weight, query_cfg.bm25_k1, query_cfg.bm25_b,
+            edge_boost_weight=query_cfg.edge_boost_weight,
+            recency=bundle.recency,
+            recency_boost_weight=query_cfg.recency_boost_weight,
+        )
+        by_file = bundle.symbols_by_file
+    except (json.JSONDecodeError, KeyError, OSError) as exc:
+        _warn(
+            f"graph.json could not be read ({type(exc).__name__}: {exc}) — "
+            "run `graphnav map` to rebuild"
+        )
+        ranked, by_file, degraded = [], {}, True
     selected = [rf.source_file for rf in ranked]
 
     out_lines = [f"# Context for: {task}", ""]
     note = staleness_note(root)
     if note:
         out_lines += [note, ""]
+    if degraded:
+        out_lines.append(
+            "_Knowledge graph could not be read (corrupt or invalid graph.json) — "
+            "run `graphnav map`._"
+        )
+        return "\n".join(out_lines) + "\n"
     if not selected:
         out_lines.append(
             "_No matching files. Try terms from the code itself (function or class names)._"
@@ -597,7 +628,7 @@ def build_context_pack(
         else:
             out_lines.append(f"- {sf}")
 
-    services = detect_services(root, MonoConfig().marker_files)
+    services = detect_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)
     if services:
         bridges = analyze_bridges(overarching_path, services)
         sel_set = set(selected)
@@ -654,27 +685,42 @@ def _extract_code_windows(abs_path, lines_wanted, before=2, after=14, max_lines=
     return "\n".join(pieces)
 
 
-def build_context_pack_inline(root, task, top_files=3, budget_tokens=2500, skip_patterns=None):
-    from codex_graph.graph_query import load_index, query_files
+def build_context_pack_inline(
+    root, task, top_files=3, budget_tokens=2500, skip_patterns=None, query_cfg=None
+):
+    from codex_graph.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
+    from codex_graph.graph_query import query_files
 
     root = os.path.abspath(root)
     overarching_path = _overarching_graph_path(root)
     if not os.path.exists(overarching_path):
         return f"# Context for: {task}\n\nNo knowledge graph found.\n"
     if skip_patterns is None:
-        skip_patterns = [
-            "node_modules", ".git", "graphify-out", "dist", "build",
-            "playwright-report", "test-results", ".next", "coverage",
-        ]
-    try:
-        index = load_index(overarching_path, skip_patterns)
-        ranked = query_files(task, index, top_files)
-    except Exception:
-        ranked = []
+        skip_patterns = list(DEFAULT_PACK_SKIP_PATTERNS)
+    if query_cfg is None:
+        query_cfg = QueryConfig()
 
-    with open(overarching_path) as f:
-        graph = json.load(f)
-    by_file = _symbols_by_file(graph)
+    degraded = False
+    bundle = None
+    try:
+        bundle = load_bundle(
+            overarching_path, skip_patterns,
+            relation_weights=query_cfg.edge_relation_weights, repo_root=root,
+        )
+        ranked = query_files(
+            task, bundle.index, top_files,
+            query_cfg.community_boost_weight, query_cfg.bm25_k1, query_cfg.bm25_b,
+            edge_boost_weight=query_cfg.edge_boost_weight,
+            recency=bundle.recency,
+            recency_boost_weight=query_cfg.recency_boost_weight,
+        )
+        by_file = bundle.symbols_by_file
+    except (json.JSONDecodeError, KeyError, OSError) as exc:
+        _warn(
+            f"graph.json could not be read ({type(exc).__name__}: {exc}) — "
+            "run `graphnav map` to rebuild"
+        )
+        ranked, by_file, degraded = [], {}, True
 
     out = [f"# Context for: {task}", ""]
     note = staleness_note(root)
@@ -683,6 +729,12 @@ def build_context_pack_inline(root, task, top_files=3, budget_tokens=2500, skip_
     out.append(
         "## Relevant code (extracted from the knowledge graph — already in context, do not re-open these files)"
     )
+    if degraded:
+        out.append(
+            "_Knowledge graph could not be read (corrupt or invalid graph.json) — "
+            "run `graphnav map`._"
+        )
+        return "\n".join(out) + "\n"
     if not ranked:
         out.append("_No confident matches; explore normally._")
         return "\n".join(out) + "\n"
@@ -705,13 +757,7 @@ def build_context_pack_inline(root, task, top_files=3, budget_tokens=2500, skip_
             out.append(snippet)
             out.append("```")
 
-    from codex_graph.graph_nav import GraphNav
-
-    try:
-        nav = GraphNav(overarching_path, skip_patterns)
-        refs = nav.references_to([rf.source_file for rf in ranked], limit=12)
-    except Exception:
-        refs = []
+    refs = bundle.nav.references_to([rf.source_file for rf in ranked], limit=12)
     if refs:
         out.append("")
         out.append("## Other code that references the above (likely also needs edits)")
@@ -759,7 +805,7 @@ def run_map(
         print("Error: 'graphify' not found on PATH. Install with: pip install graphifyy", file=sys.stderr)
         return 1
 
-    services = detect_services(root, mono_cfg.marker_files)
+    services = detect_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)
     if not services:
         print(f"No services detected in {root}. Add code to subdirectories (or marker files like package.json/pyproject.toml).", file=sys.stderr)
         return 1
@@ -806,7 +852,7 @@ def run_watch(
         print("Error: 'graphify' not found on PATH. Install with: pip install graphifyy", file=sys.stderr)
         return 1
 
-    services = detect_services(root, mono_cfg.marker_files)
+    services = detect_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)
     if not services:
         print(f"No services detected in {root}.", file=sys.stderr)
         return 1
