@@ -13,6 +13,16 @@ from dataclasses import dataclass, field
 from codex_graph.config import MonoConfig, QueryConfig
 
 
+def find_graphify() -> str | None:
+    path = shutil.which("graphify")
+    if path:
+        return path
+    candidate = os.path.join(os.path.dirname(sys.executable), "graphify")
+    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return candidate
+    return None
+
+
 def _warn(msg: str) -> None:
     print(f"[graphnav] warning: {msg}", file=sys.stderr)
 
@@ -825,9 +835,9 @@ def run_map(
     dry_run: bool = False,
 ) -> int:
     root = os.path.abspath(root)
-    graphify_path = shutil.which("graphify")
+    graphify_path = find_graphify()
     if graphify_path is None:
-        print("Error: 'graphify' not found on PATH. Install with: pip install graphifyy", file=sys.stderr)
+        print("Error: 'graphify' not found. Install with: pip install graphifyy", file=sys.stderr)
         return 1
 
     services = detect_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)
@@ -872,9 +882,9 @@ def run_watch(
     backend_override: str | None = None,
 ) -> int:
     root = os.path.abspath(root)
-    graphify_path = shutil.which("graphify")
+    graphify_path = find_graphify()
     if graphify_path is None:
-        print("Error: 'graphify' not found on PATH. Install with: pip install graphifyy", file=sys.stderr)
+        print("Error: 'graphify' not found. Install with: pip install graphifyy", file=sys.stderr)
         return 1
 
     services = detect_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)

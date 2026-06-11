@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass
 
@@ -13,6 +12,7 @@ from codex_graph.multirepo import (
     _load_env_file,
     _overarching_graph_path,
     detect_services,
+    find_graphify,
     staleness_note,
 )
 
@@ -35,9 +35,9 @@ class CheckResult:
 
 
 def _check_graphify_binary() -> CheckResult:
-    path = shutil.which("graphify")
+    path = find_graphify()
     if path is None:
-        return CheckResult("fail", "graphify binary", "not found on PATH — install with: pip install graphifyy")
+        return CheckResult("fail", "graphify binary", "not found — install with: pip install graphifyy")
     detail = path
     try:
         out = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=5)

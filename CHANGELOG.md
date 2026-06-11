@@ -4,6 +4,13 @@ All notable changes to GraphNav are documented here. Versions follow [Semantic V
 
 ---
 
+## [1.2.1] — 2026-06-11
+
+### Fixed
+- `graphify` binary lookup now falls back to the Python interpreter's `bin` directory when it isn't on `PATH` (affects `pip install --user` and un-activated venv installs).
+
+---
+
 ## [1.2.0] — 2026-06-11
 
 ### Added
