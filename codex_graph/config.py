@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 
 @dataclass
@@ -19,6 +20,8 @@ class QueryConfig:
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
     edge_boost_weight: float = 0.4
+    edge_relation_weights: dict[str, float] = field(default_factory=dict)
+    recency_boost_weight: float = 0.2
 
 
 @dataclass
@@ -47,6 +50,7 @@ class MonoConfig:
     watch_poll_interval: float = 3.0
     context_budget_tokens: int = 2000
     context_top_files: int = 8
+    extra_skip_dirs: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -58,7 +62,31 @@ class Config:
     mono: MonoConfig = field(default_factory=MonoConfig)
 
 
-def _apply_toml(cfg: Config, data: dict) -> Config:
+_SECTION_TYPES = {
+    "graph": GraphConfig,
+    "query": QueryConfig,
+    "context": ContextConfig,
+    "codex": CodexConfig,
+    "mono": MonoConfig,
+}
+
+
+def _collect_unknown_keys(data: dict, warnings: list[str]) -> None:
+    for section, values in data.items():
+        section_type = _SECTION_TYPES.get(section)
+        if section_type is None:
+            warnings.append(f"unknown section [{section}]")
+            continue
+        known_keys = {f.name for f in fields(section_type)}
+        for key in values:
+            if key not in known_keys:
+                warnings.append(f"unknown key {key} in [{section}]")
+
+
+def _apply_toml(cfg: Config, data: dict, warnings: list[str] | None = None) -> Config:
+    if warnings is None:
+        warnings = []
+    _collect_unknown_keys(data, warnings)
     if "graph" in data:
         g = data["graph"]
         cfg.graph = GraphConfig(
@@ -74,6 +102,8 @@ def _apply_toml(cfg: Config, data: dict) -> Config:
             bm25_k1=q.get("bm25_k1", cfg.query.bm25_k1),
             bm25_b=q.get("bm25_b", cfg.query.bm25_b),
             edge_boost_weight=q.get("edge_boost_weight", cfg.query.edge_boost_weight),
+            edge_relation_weights=q.get("edge_relation_weights", cfg.query.edge_relation_weights),
+            recency_boost_weight=q.get("recency_boost_weight", cfg.query.recency_boost_weight),
         )
     if "context" in data:
         c = data["context"]
@@ -98,12 +128,56 @@ def _apply_toml(cfg: Config, data: dict) -> Config:
             watch_poll_interval=m.get("watch_poll_interval", cfg.mono.watch_poll_interval),
             context_budget_tokens=m.get("context_budget_tokens", cfg.mono.context_budget_tokens),
             context_top_files=m.get("context_top_files", cfg.mono.context_top_files),
+            extra_skip_dirs=m.get("extra_skip_dirs", cfg.mono.extra_skip_dirs),
         )
     return cfg
 
 
-def load_config(explicit_path: str | None = None) -> Config:
+def _validate(cfg: Config) -> list[str]:
+    warnings: list[str] = []
+    if cfg.query.top_k < 1:
+        warnings.append(f"query.top_k {cfg.query.top_k} clamped to 1")
+        cfg.query.top_k = 1
+    if cfg.query.bm25_k1 <= 0:
+        warnings.append(f"query.bm25_k1 {cfg.query.bm25_k1} clamped to 1.5")
+        cfg.query.bm25_k1 = 1.5
+    if cfg.query.bm25_b < 0.0:
+        warnings.append(f"query.bm25_b {cfg.query.bm25_b} clamped to 0.0")
+        cfg.query.bm25_b = 0.0
+    elif cfg.query.bm25_b > 1.0:
+        warnings.append(f"query.bm25_b {cfg.query.bm25_b} clamped to 1.0")
+        cfg.query.bm25_b = 1.0
+    if cfg.query.community_boost_weight < 0:
+        warnings.append(f"query.community_boost_weight {cfg.query.community_boost_weight} clamped to 0.0")
+        cfg.query.community_boost_weight = 0.0
+    if cfg.query.edge_boost_weight < 0:
+        warnings.append(f"query.edge_boost_weight {cfg.query.edge_boost_weight} clamped to 0.0")
+        cfg.query.edge_boost_weight = 0.0
+    if cfg.query.recency_boost_weight < 0:
+        warnings.append(f"query.recency_boost_weight {cfg.query.recency_boost_weight} clamped to 0.0")
+        cfg.query.recency_boost_weight = 0.0
+    for relation, weight in cfg.query.edge_relation_weights.items():
+        if weight < 0:
+            warnings.append(f"query.edge_relation_weights.{relation} {weight} clamped to 0.0")
+            cfg.query.edge_relation_weights[relation] = 0.0
+    if cfg.mono.watch_poll_interval < 0.5:
+        warnings.append(f"mono.watch_poll_interval {cfg.mono.watch_poll_interval} clamped to 0.5")
+        cfg.mono.watch_poll_interval = 0.5
+    if cfg.mono.context_top_files < 1:
+        warnings.append(f"mono.context_top_files {cfg.mono.context_top_files} clamped to 1")
+        cfg.mono.context_top_files = 1
+    if cfg.mono.context_budget_tokens < 0:
+        warnings.append(f"mono.context_budget_tokens {cfg.mono.context_budget_tokens} clamped to 0")
+        cfg.mono.context_budget_tokens = 0
+    if cfg.codex.timeout_seconds < 1:
+        warnings.append(f"codex.timeout_seconds {cfg.codex.timeout_seconds} clamped to 1")
+        cfg.codex.timeout_seconds = 1
+    return warnings
+
+
+def load_config_report(explicit_path: str | None = None) -> tuple[Config, str | None, list[str]]:
     cfg = Config()
+    warnings: list[str] = []
 
     candidates: list[str] = []
     if explicit_path:
@@ -116,15 +190,24 @@ def load_config(explicit_path: str | None = None) -> Config:
         candidates.append(os.path.expanduser("~/.graphnav/config.toml"))
         candidates.append(os.path.expanduser("~/.codex-graph/config.toml"))
 
+    source_path: str | None = None
     for path in candidates:
         if os.path.exists(path):
             with open(path, "rb") as f:
                 data = tomllib.load(f)
-            cfg = _apply_toml(cfg, data)
+            cfg = _apply_toml(cfg, data, warnings)
+            source_path = path
             break
     else:
         if explicit_path:
-            import sys
             print(f"Warning: config file not found: {explicit_path}", file=sys.stderr)
 
+    warnings.extend(_validate(cfg))
+    return cfg, source_path, warnings
+
+
+def load_config(explicit_path: str | None = None) -> Config:
+    cfg, _, warnings = load_config_report(explicit_path)
+    for w in warnings:
+        print(f"[graphnav] config warning: {w}", file=sys.stderr)
     return cfg
