@@ -17,6 +17,18 @@ def _warn(msg: str) -> None:
     print(f"[graphnav] warning: {msg}", file=sys.stderr)
 
 
+def _write_if_changed(path: str, content: str) -> bool:
+    try:
+        with open(path) as f:
+            if f.read() == content:
+                return False
+    except OSError:
+        pass
+    with open(path, "w") as f:
+        f.write(content)
+    return True
+
+
 SOURCE_EXTENSIONS = frozenset({
     ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte",
     ".go", ".rs", ".java", ".kt", ".rb", ".php", ".cs", ".swift", ".scala",
@@ -102,6 +114,24 @@ class ServiceInfo:
     abs_path: str
     graph_path: str
     bridges_to: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RestartBackoff:
+    initial: float = 1.0
+    cap: float = 60.0
+    stable_reset: float = 60.0
+    started_at: float | None = None
+    delay: float = 0.0
+
+    def record_start(self, now: float) -> None:
+        self.started_at = now
+
+    def next_delay(self, now: float) -> float:
+        if self.started_at is not None and now - self.started_at >= self.stable_reset:
+            self.delay = 0.0
+        self.delay = self.initial if self.delay == 0 else min(self.delay * 2, self.cap)
+        return self.delay
 
 
 @dataclass
@@ -322,8 +352,7 @@ def partition_graph(
         subgraph = dict(base_meta)
         subgraph["nodes"] = per_nodes[svc.name]
         subgraph["links"] = per_links[svc.name]
-        with open(svc.graph_path, "w") as f:
-            json.dump(subgraph, f, indent=2)
+        _write_if_changed(svc.graph_path, json.dumps(subgraph, indent=2))
         counts[svc.name] = len(per_nodes[svc.name])
     return counts
 
@@ -405,8 +434,7 @@ def write_bridges_md(service: ServiceInfo, rows: list[BridgeRow]) -> str:
                 f"| {r.local_file} | {r.local_symbol} | {r.local_loc} | {r.relation} | "
                 f"{r.remote_svc} | {r.remote_file} | {r.remote_symbol} | {r.remote_loc} |"
             )
-    with open(path, "w") as f:
-        f.write("\n".join(lines) + "\n")
+    _write_if_changed(path, "\n".join(lines) + "\n")
     return path
 
 
@@ -451,8 +479,7 @@ def write_symbols_md(service: ServiceInfo) -> str:
             for label, loc in by_file[sf]:
                 lines.append(f"- {label}{(' — ' + loc) if loc else ''}")
             lines.append("")
-    with open(path, "w") as f:
-        f.write("\n".join(lines).rstrip() + "\n")
+    _write_if_changed(path, "\n".join(lines).rstrip() + "\n")
     return path
 
 
@@ -465,8 +492,7 @@ def write_monorepo_map(root: str, services: list[ServiceInfo]) -> str:
         graph_rel = os.path.relpath(svc.graph_path, root)
         bridges_cell = ", ".join(svc.bridges_to) if svc.bridges_to else "_none_"
         lines.append(f"| {svc.name} | {graph_rel} | {bridges_cell} |")
-    with open(path, "w") as f:
-        f.write("\n".join(lines) + "\n")
+    _write_if_changed(path, "\n".join(lines) + "\n")
     return path
 
 
@@ -539,8 +565,7 @@ def _write_managed_block(path: str, content: str) -> None:
         new_content = block
 
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
-        f.write(new_content)
+    _write_if_changed(path, new_content)
 
 
 def write_copilot_instructions(root: str, services: list[ServiceInfo]) -> str:
@@ -879,10 +904,14 @@ def run_watch(
         )
 
     watch_proc = _start_watch()
+    backoff = RestartBackoff()
+    backoff.record_start(time.monotonic())
+    restart_at: float | None = None
     try:
         last_mtime = os.stat(overarching_path).st_mtime
     except OSError:
         last_mtime = 0.0
+    pending_mtime: float | None = None
 
     print(f"[graphnav] Watching {root} ({len(services)} service(s)). Press Ctrl-C to stop.", file=sys.stderr)
     try:
@@ -893,15 +922,28 @@ def run_watch(
                 mtime = os.stat(overarching_path).st_mtime
             except OSError:
                 mtime = last_mtime
-            if mtime != last_mtime:
-                last_mtime = mtime
-                ts = time.strftime("%H:%M:%S")
-                print(f"[graphnav] {ts} graph updated — re-partitioning and re-analyzing bridges ...", file=sys.stderr)
-                _refresh(root, services, overarching_path)
+            if pending_mtime is not None:
+                if mtime == pending_mtime:
+                    last_mtime = mtime
+                    pending_mtime = None
+                    ts = time.strftime("%H:%M:%S")
+                    print(f"[graphnav] {ts} graph updated — re-partitioning and re-analyzing bridges ...", file=sys.stderr)
+                    _refresh(root, services, overarching_path)
+                else:
+                    pending_mtime = mtime
+            elif mtime != last_mtime:
+                pending_mtime = mtime
 
             if watch_proc.poll() is not None:
-                print(f"[graphnav] WARNING: graphify watch exited (exit {watch_proc.returncode}), restarting ...", file=sys.stderr)
-                watch_proc = _start_watch()
+                now = time.monotonic()
+                if restart_at is None:
+                    delay = backoff.next_delay(now)
+                    print(f"[graphnav] WARNING: graphify watch exited (exit {watch_proc.returncode}), restarting in {delay:.0f}s ...", file=sys.stderr)
+                    restart_at = now + delay
+                elif now >= restart_at:
+                    watch_proc = _start_watch()
+                    backoff.record_start(now)
+                    restart_at = None
 
     except KeyboardInterrupt:
         print("\n[graphnav] Stopping watch ...", file=sys.stderr)

@@ -12,12 +12,14 @@ import pytest
 from codex_graph.config import MonoConfig
 from codex_graph.multirepo import (
     BridgeRow,
+    RestartBackoff,
     ServiceInfo,
     _find_env_file,
     _has_source_files,
     _load_env_file,
     _service_of,
     _stream_proc,
+    _write_if_changed,
     _write_managed_block,
     analyze_bridges,
     build_context_pack,
@@ -1281,7 +1283,7 @@ class TestRunWatch:
             sleep_count[0] += 1
             if sleep_count[0] == 1:
                 os.utime(overarching, (9_999_999_999.0, 9_999_999_999.0))
-            elif sleep_count[0] >= 2:
+            elif sleep_count[0] >= 3:
                 raise KeyboardInterrupt
 
         monkeypatch.setattr("codex_graph.multirepo.time.sleep", fake_sleep)
@@ -1303,10 +1305,17 @@ class TestRunWatch:
 
         monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", make_popen)
 
+        clock = [0.0]
+        def fake_monotonic():
+            clock[0] += 100.0
+            return clock[0]
+
+        monkeypatch.setattr("codex_graph.multirepo.time.monotonic", fake_monotonic)
+
         sleep_count = [0]
         def fake_sleep(_):
             sleep_count[0] += 1
-            if sleep_count[0] >= 2:
+            if sleep_count[0] >= 3:
                 raise KeyboardInterrupt
 
         monkeypatch.setattr("codex_graph.multirepo.time.sleep", fake_sleep)
@@ -1409,3 +1418,131 @@ class TestDetectServicesExtraSkipDirs:
             (d / "pyproject.toml").touch()
         services = detect_services(str(tmp_path), MonoConfig().marker_files)
         assert [s.name for s in services] == ["sandbox", "svc"]
+
+
+class TestRestartBackoff:
+    def test_rapid_restarts_double(self):
+        b = RestartBackoff()
+        b.record_start(0.0)
+        assert b.next_delay(1.0) == 1.0
+        assert b.next_delay(2.0) == 2.0
+        assert b.next_delay(3.0) == 4.0
+
+    def test_delay_caps(self):
+        b = RestartBackoff(initial=1.0, cap=60.0)
+        b.record_start(0.0)
+        delays = [b.next_delay(1.0 + i * 0.1) for i in range(12)]
+        assert max(delays) == 60.0
+        assert delays[-1] == 60.0
+
+    def test_resets_after_stable_period(self):
+        b = RestartBackoff(initial=1.0, stable_reset=60.0)
+        b.record_start(0.0)
+        b.next_delay(1.0)
+        b.next_delay(2.0)
+        b.record_start(100.0)
+        assert b.next_delay(200.0) == 1.0
+
+
+class TestWriteIfChanged:
+    def test_identical_content_not_rewritten(self, tmp_path):
+        path = str(tmp_path / "f.txt")
+        assert _write_if_changed(path, "hello") is True
+        before = os.stat(path).st_mtime_ns
+        assert _write_if_changed(path, "hello") is False
+        assert os.stat(path).st_mtime_ns == before
+
+    def test_changed_content_rewritten(self, tmp_path):
+        path = str(tmp_path / "f.txt")
+        _write_if_changed(path, "hello")
+        assert _write_if_changed(path, "world") is True
+        assert (tmp_path / "f.txt").read_text() == "world"
+
+    def test_missing_file_created(self, tmp_path):
+        path = str(tmp_path / "new.txt")
+        assert _write_if_changed(path, "content") is True
+        assert os.path.exists(path)
+
+    def test_symbols_md_stable_second_write(self, tmp_path):
+        svc_dir = tmp_path / "svc"
+        (svc_dir / "graphify-out").mkdir(parents=True)
+        graph_path = svc_dir / "graphify-out" / "graph.json"
+        write_graph(graph_path, [
+            {"id": "svc_f", "label": "do_thing", "source_file": "svc/f.py",
+             "file_type": "code", "source_location": "L3"},
+        ], [])
+        svc = ServiceInfo("svc", str(svc_dir), str(graph_path))
+        out = write_symbols_md(svc)
+        before = os.stat(out).st_mtime_ns
+        write_symbols_md(svc)
+        assert os.stat(out).st_mtime_ns == before
+
+    def test_managed_block_stable_second_write(self, tmp_path):
+        path = str(tmp_path / "CLAUDE.md")
+        _write_managed_block(path, "playbook body")
+        before = os.stat(path).st_mtime_ns
+        _write_managed_block(path, "playbook body")
+        assert os.stat(path).st_mtime_ns == before
+
+    def test_partition_graph_stable_second_write(self, tmp_path):
+        nodes = [
+            {"id": "a_x", "label": "X", "source_file": "svc-a/x.py", "file_type": "code"},
+            {"id": "b_y", "label": "Y", "source_file": "svc-b/y.py", "file_type": "code"},
+        ]
+        overarching = tmp_path / "graphify-out" / "graph.json"
+        write_graph(overarching, nodes, [])
+        services = [
+            ServiceInfo("svc-a", str(tmp_path / "svc-a"), str(tmp_path / "svc-a" / "graphify-out" / "graph.json")),
+            ServiceInfo("svc-b", str(tmp_path / "svc-b"), str(tmp_path / "svc-b" / "graphify-out" / "graph.json")),
+        ]
+        partition_graph(str(overarching), services)
+        before = os.stat(services[0].graph_path).st_mtime_ns
+        partition_graph(str(overarching), services)
+        assert os.stat(services[0].graph_path).st_mtime_ns == before
+
+
+class TestWatchDebounce:
+    def test_refresh_waits_for_quiet_poll(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        overarching = _write_overarching(str(two_svc_root))
+        refreshes = []
+        monkeypatch.setattr("codex_graph.multirepo._refresh",
+                            lambda *a, **kw: refreshes.append(1) or {})
+        proc = make_mock_proc(None)
+        proc.poll.return_value = None
+        monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: proc)
+
+        sleep_count = [0]
+        def fake_sleep(_):
+            sleep_count[0] += 1
+            if sleep_count[0] == 1:
+                os.utime(overarching, (9_999_999_999.0, 9_999_999_999.0))
+            elif sleep_count[0] >= 3:
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr("codex_graph.multirepo.time.sleep", fake_sleep)
+        run_watch(str(two_svc_root), MonoConfig(watch_poll_interval=0.001))
+        assert len(refreshes) == 2
+
+    def test_continuous_churn_defers_refresh(self, two_svc_root, monkeypatch):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        overarching = _write_overarching(str(two_svc_root))
+        refreshes = []
+        monkeypatch.setattr("codex_graph.multirepo._refresh",
+                            lambda *a, **kw: refreshes.append(1) or {})
+        proc = make_mock_proc(None)
+        proc.poll.return_value = None
+        monkeypatch.setattr("codex_graph.multirepo.subprocess.Popen", lambda *a, **kw: proc)
+
+        stamp = [2_000_000_000.0]
+        sleep_count = [0]
+        def fake_sleep(_):
+            sleep_count[0] += 1
+            if sleep_count[0] >= 4:
+                raise KeyboardInterrupt
+            stamp[0] += 1.0
+            os.utime(overarching, (stamp[0], stamp[0]))
+
+        monkeypatch.setattr("codex_graph.multirepo.time.sleep", fake_sleep)
+        run_watch(str(two_svc_root), MonoConfig(watch_poll_interval=0.001))
+        assert refreshes == [1]
