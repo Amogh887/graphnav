@@ -360,6 +360,12 @@ The generated `CLAUDE.md`, `AGENTS.md`, and `.github/copilot-instructions.md` ca
 
 ---
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a full version history.
+
+---
+
 ## License
 
 [MIT](LICENSE) © 2026 Amogh Rao
