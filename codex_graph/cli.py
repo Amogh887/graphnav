@@ -141,10 +141,17 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
         print(tools.impact(args.term))
         sys.exit(0)
 
-    nav = load_bundle(
-        graph_path, cfg.graph.skip_patterns,
-        relation_weights=cfg.query.edge_relation_weights, repo_root=root,
-    ).nav
+    import json as _json
+
+    try:
+        nav = load_bundle(
+            graph_path, cfg.graph.skip_patterns,
+            relation_weights=cfg.query.edge_relation_weights, repo_root=root,
+        ).nav
+    except (_json.JSONDecodeError, KeyError, OSError) as exc:
+        print(f"Error: could not read {graph_path} ({type(exc).__name__}: {exc}).", file=sys.stderr)
+        print("Run `graphnav map` to rebuild the graph.", file=sys.stderr)
+        sys.exit(2)
 
     if kind == "find":
         hits = nav.find_symbols(args.term, k=10)
@@ -284,6 +291,10 @@ def main() -> None:
         except GraphNotFoundError as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(2)
+        except Exception as e:
+            print(f"Error: could not read {graph_path} ({type(e).__name__}: {e}).", file=sys.stderr)
+            print("Run `graphnav map` to rebuild the graph.", file=sys.stderr)
+            sys.exit(2)
 
         ranked = query_files(
             prompt,
@@ -317,5 +328,13 @@ def main() -> None:
         sys.exit(124)
 
 
+def entry() -> None:
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[graphnav] interrupted", file=sys.stderr)
+        sys.exit(130)
+
+
 if __name__ == "__main__":
-    main()
+    entry()

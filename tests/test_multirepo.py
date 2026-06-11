@@ -1199,12 +1199,11 @@ class TestRunMap:
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
         roots_seen = []
 
-        def fake_detect(root, markers, extra_skip_dirs=None):
+        def fake_resolve(root, markers, extra_skip_dirs=None):
             roots_seen.append(root)
-            return []
+            return [], False
 
-        monkeypatch.setattr("codex_graph.multirepo.detect_services", fake_detect)
-        monkeypatch.setattr("codex_graph.multirepo._has_source_files", lambda *a, **k: False)
+        monkeypatch.setattr("codex_graph.multirepo.resolve_services", fake_resolve)
         run_map(".", MonoConfig())
         assert os.path.isabs(roots_seen[0])
 

@@ -149,7 +149,7 @@ def _build_bundle(
 ) -> GraphBundle:
     from codex_graph.multirepo import _symbols_by_file
 
-    with open(graph_path) as f:
+    with open(graph_path, encoding="utf-8") as f:
         graph = json.load(f)
     return GraphBundle(
         stamp=stamp,

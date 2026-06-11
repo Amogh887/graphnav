@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -39,14 +40,34 @@ def find_graphify() -> str | None:
     return None
 
 
+def _any_subdir_has_marker(
+    root: str,
+    marker_files: list[str],
+    extra_skip_dirs: list[str] | None = None,
+) -> bool:
+    skip_dirs = SKIP_DIRS | frozenset(extra_skip_dirs or ())
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return False
+    for entry in entries:
+        abs_path = os.path.join(root, entry)
+        if not os.path.isdir(abs_path) or entry in skip_dirs or entry.startswith("."):
+            continue
+        if any(os.path.exists(os.path.join(abs_path, m)) for m in marker_files):
+            return True
+    return False
+
+
 def resolve_services(
     root: str,
     marker_files: list[str],
     extra_skip_dirs: list[str] | None = None,
 ) -> tuple[list[ServiceInfo], bool]:
-    services = detect_services(root, marker_files, extra_skip_dirs)
-    if services:
-        return services, False
+    if _any_subdir_has_marker(root, marker_files, extra_skip_dirs):
+        services = detect_services(root, marker_files, extra_skip_dirs)
+        if services:
+            return services, False
     skip_dirs = SKIP_DIRS | frozenset(extra_skip_dirs or ())
     if _has_source_files(root, skip_dirs=skip_dirs):
         name = os.path.basename(os.path.abspath(root).rstrip(os.sep)) or "repo"
@@ -65,12 +86,12 @@ def _warn(msg: str) -> None:
 
 def _write_if_changed(path: str, content: str) -> bool:
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             if f.read() == content:
                 return False
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         pass
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return True
 
@@ -104,7 +125,7 @@ def _find_env_file(start: str) -> str | None:
 def _parse_env_file(path: str) -> dict[str, str]:
     env_vars: dict[str, str] = {}
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8-sig") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
@@ -138,13 +159,22 @@ def _env_file_sources(root: str) -> list[str]:
     return sources
 
 
+_KEY_ALIASES = {
+    "ANTHROPIC_KEY": "ANTHROPIC_API_KEY",
+    "OPENAI_KEY": "OPENAI_API_KEY",
+    "GEMINI_KEY": "GEMINI_API_KEY",
+    "DEEPSEEK_KEY": "DEEPSEEK_API_KEY",
+}
+
+
 def _load_env_file(root: str) -> dict[str, str]:
     env_vars: dict[str, str] = {}
     for path in _env_file_sources(root):
         for key, value in _parse_env_file(path).items():
             env_vars.setdefault(key, value)
-    if "ANTHROPIC_KEY" in env_vars and "ANTHROPIC_API_KEY" not in env_vars:
-        env_vars["ANTHROPIC_API_KEY"] = env_vars["ANTHROPIC_KEY"]
+    for alias, canonical in _KEY_ALIASES.items():
+        if alias in env_vars and canonical not in env_vars:
+            env_vars[canonical] = env_vars[alias]
     return env_vars
 
 
@@ -316,7 +346,7 @@ def write_graph_meta(root: str) -> None:
     meta = {"built_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "git_sha": _git_sha(root)}
     path = _graph_meta_path(root)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
 
@@ -325,7 +355,7 @@ def staleness_note(root: str) -> str:
     if not os.path.exists(path):
         return ""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             meta = json.load(f)
     except (OSError, json.JSONDecodeError):
         return ""
@@ -371,7 +401,7 @@ def partition_graph(
     overarching_graph_path: str,
     services: list[ServiceInfo],
 ) -> dict[str, int]:
-    with open(overarching_graph_path) as f:
+    with open(overarching_graph_path, encoding="utf-8") as f:
         graph = json.load(f)
 
     service_names = {s.name for s in services}
@@ -414,7 +444,7 @@ def analyze_bridges(
     overarching_graph_path: str,
     services: list[ServiceInfo],
 ) -> dict[str, list[BridgeRow]]:
-    with open(overarching_graph_path) as f:
+    with open(overarching_graph_path, encoding="utf-8") as f:
         graph = json.load(f)
 
     service_names = {s.name for s in services}
@@ -507,7 +537,7 @@ def write_symbols_md(service: ServiceInfo) -> str:
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "SYMBOLS.md")
     try:
-        with open(service.graph_path) as f:
+        with open(service.graph_path, encoding="utf-8") as f:
             graph = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         _warn(f"could not read {service.graph_path} ({type(exc).__name__}) — symbols index will be empty")
@@ -589,7 +619,7 @@ def _write_managed_block(path: str, content: str) -> None:
     existing = ""
     if os.path.exists(path):
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 existing = f.read()
         except OSError:
             existing = ""
@@ -733,7 +763,7 @@ def build_context_pack(
 
 def _extract_code_windows(abs_path, lines_wanted, before=2, after=14, max_lines=110):
     try:
-        with open(abs_path, errors="replace") as f:
+        with open(abs_path, encoding="utf-8", errors="replace") as f:
             src = f.read().splitlines()
     except OSError:
         return ""
@@ -844,7 +874,10 @@ def build_context_pack_inline(
     text = "\n".join(out) + "\n"
     char_budget = max(budget_tokens, 0) * 4
     if char_budget and len(text) > char_budget:
-        text = text[:char_budget].rstrip() + "\n```\n\n_(truncated to budget)_\n"
+        truncated = text[:char_budget].rstrip()
+        if truncated.count("```") % 2 == 1:
+            truncated += "\n```"
+        text = truncated + "\n\n_(truncated to budget)_\n"
     return text
 
 
@@ -904,7 +937,12 @@ def run_map(
         print("  Ensure an API key is available (e.g. ANTHROPIC_API_KEY or ANTHROPIC_KEY in a .env file).", file=sys.stderr)
         return 1
 
-    bridges = _refresh(root, services, overarching_path, single=single)
+    try:
+        bridges = _refresh(root, services, overarching_path, single=single)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error: extracted graph could not be read ({type(exc).__name__}: {exc}).", file=sys.stderr)
+        print("  Re-run `graphnav map`; if it persists, delete graphify-out/ and try again.", file=sys.stderr)
+        return 1
     total_bridges = sum(len(rows) for rows in bridges.values())
 
     print(f"\nSetup complete. Your AI coding agents are now configured for this repo.")
@@ -950,7 +988,10 @@ def run_watch(
             print(f"Error: bootstrap extraction failed (exit {rc}).", file=sys.stderr)
             return 1
 
-    _refresh(root, services, overarching_path, single=single)
+    try:
+        _refresh(root, services, overarching_path, single=single)
+    except (OSError, json.JSONDecodeError) as exc:
+        _warn(f"could not read graph.json ({type(exc).__name__}) — will retry as it updates")
 
     def _start_watch() -> subprocess.Popen:
         return subprocess.Popen(
@@ -959,6 +1000,14 @@ def run_watch(
             stderr=subprocess.DEVNULL,
             env=env,
         )
+
+    def _sigterm(_signum, _frame):
+        raise KeyboardInterrupt
+
+    try:
+        signal.signal(signal.SIGTERM, _sigterm)
+    except (ValueError, OSError):
+        pass
 
     watch_proc = _start_watch()
     backoff = RestartBackoff()
@@ -985,7 +1034,11 @@ def run_watch(
                     pending_mtime = None
                     ts = time.strftime("%H:%M:%S")
                     print(f"[graphnav] {ts} graph updated — refreshing symbols and bridges ...", file=sys.stderr)
-                    _refresh(root, services, overarching_path, single=single)
+                    try:
+                        _refresh(root, services, overarching_path, single=single)
+                    except (OSError, json.JSONDecodeError) as exc:
+                        _warn(f"could not read graph.json ({type(exc).__name__}) — will retry on next update")
+                        last_mtime = 0.0
                 else:
                     pending_mtime = mtime
             elif mtime != last_mtime:

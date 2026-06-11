@@ -133,8 +133,47 @@ def _apply_toml(cfg: Config, data: dict, warnings: list[str] | None = None) -> C
     return cfg
 
 
+_NUMERIC_FIELDS = (
+    ("query", "top_k", int), ("query", "community_boost_weight", float),
+    ("query", "bm25_k1", float), ("query", "bm25_b", float),
+    ("query", "edge_boost_weight", float), ("query", "recency_boost_weight", float),
+    ("context", "max_file_chars", int),
+    ("codex", "timeout_seconds", int),
+    ("mono", "watch_poll_interval", float), ("mono", "context_budget_tokens", int),
+    ("mono", "context_top_files", int),
+)
+
+
+def _coerce_types(cfg: Config, warnings: list[str]) -> None:
+    defaults = Config()
+    for section, key, typ in _NUMERIC_FIELDS:
+        value = getattr(getattr(cfg, section), key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            fallback = getattr(getattr(defaults, section), key)
+            warnings.append(f"{section}.{key} has invalid value {value!r} — using default {fallback}")
+            setattr(getattr(cfg, section), key, fallback)
+        elif typ is int and not isinstance(value, int):
+            setattr(getattr(cfg, section), key, int(value))
+    if not isinstance(cfg.query.edge_relation_weights, dict):
+        warnings.append("query.edge_relation_weights must be a table — ignoring")
+        cfg.query.edge_relation_weights = {}
+    else:
+        for rel in list(cfg.query.edge_relation_weights):
+            w = cfg.query.edge_relation_weights[rel]
+            if isinstance(w, bool) or not isinstance(w, (int, float)):
+                warnings.append(f"query.edge_relation_weights.{rel} has invalid value {w!r} — ignoring")
+                del cfg.query.edge_relation_weights[rel]
+    for section, key in (("mono", "marker_files"), ("mono", "extra_skip_dirs"), ("graph", "skip_patterns"), ("codex", "extra_args")):
+        value = getattr(getattr(cfg, section), key)
+        if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
+            fallback = getattr(getattr(Config(), section), key)
+            warnings.append(f"{section}.{key} must be a list of strings — using default")
+            setattr(getattr(cfg, section), key, fallback)
+
+
 def _validate(cfg: Config) -> list[str]:
     warnings: list[str] = []
+    _coerce_types(cfg, warnings)
     if cfg.query.top_k < 1:
         warnings.append(f"query.top_k {cfg.query.top_k} clamped to 1")
         cfg.query.top_k = 1
@@ -192,12 +231,20 @@ def load_config_report(explicit_path: str | None = None) -> tuple[Config, str | 
 
     source_path: str | None = None
     for path in candidates:
-        if os.path.exists(path):
+        if not os.path.exists(path):
+            continue
+        try:
             with open(path, "rb") as f:
                 data = tomllib.load(f)
-            cfg = _apply_toml(cfg, data, warnings)
+        except (tomllib.TOMLDecodeError, OSError) as exc:
+            warnings.append(f"could not parse {path} ({exc}) — using defaults")
             source_path = path
             break
+        if not explicit_path and not any(section in data for section in _SECTION_TYPES):
+            continue
+        cfg = _apply_toml(cfg, data, warnings)
+        source_path = path
+        break
     else:
         if explicit_path:
             print(f"Warning: config file not found: {explicit_path}", file=sys.stderr)

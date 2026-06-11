@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -46,7 +47,7 @@ class GraphTools:
                 relation_weights=self.query_cfg.edge_relation_weights,
                 repo_root=self.root,
             ).nav
-        except GraphNotFoundError:
+        except (GraphNotFoundError, OSError, json.JSONDecodeError, KeyError):
             return None
 
     def graph_context(self, task: str) -> str:

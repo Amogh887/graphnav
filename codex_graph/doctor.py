@@ -11,8 +11,8 @@ from codex_graph.multirepo import (
     _graph_meta_path,
     _load_env_file,
     _overarching_graph_path,
-    detect_services,
     find_graphify,
+    resolve_services,
     staleness_note,
 )
 
@@ -104,9 +104,11 @@ def _check_api_key(root: str, cfg: Config) -> CheckResult:
 
 
 def _check_services(root: str, cfg: Config) -> CheckResult:
-    services = detect_services(root, cfg.mono.marker_files, cfg.mono.extra_skip_dirs)
+    services, single = resolve_services(root, cfg.mono.marker_files, cfg.mono.extra_skip_dirs)
     if not services:
-        return CheckResult("fail", "services", "no services detected — add code or marker files to subdirectories")
+        return CheckResult("fail", "services", "no source code found — run graphnav from your project root")
+    if single:
+        return CheckResult("ok", "services", "single project (whole repo mapped as one graph)")
     names = [s.name for s in services]
     shown = ", ".join(names[:MAX_SERVICE_NAMES_SHOWN])
     if len(names) > MAX_SERVICE_NAMES_SHOWN:

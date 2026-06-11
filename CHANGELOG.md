@@ -4,6 +4,23 @@ All notable changes to GraphNav are documented here. Versions follow [Semantic V
 
 ---
 
+## [1.2.3] — 2026-06-12
+
+### Fixed
+- **Flat projects with `src/`/`tests/` subfolders are no longer misdetected as monorepos.** A repo is treated as a monorepo only when a subdirectory has its own manifest (e.g. `package.json`, `pyproject.toml`); otherwise the whole repo is mapped as one graph, so root-level code is never orphaned.
+- A malformed `config.toml` no longer crashes every command (falls back to defaults with a warning); a foreign `config.toml` (e.g. Hugo's) with none of graphnav's sections is ignored instead of spamming warnings; wrong-typed config values are replaced with defaults instead of raising `TypeError`.
+- `graphnav neighbors`/`impact` now prefer an exact symbol-name match (`main` no longer resolves to `test_main`).
+- A corrupt or mid-write `graph.json` no longer crashes `map`, the `watch` daemon, `find`/`neighbors`/`impact`, or the MCP tools — all report a friendly "run `graphnav map`" message and `watch` retries on the next update.
+- `graphnav watch` now shuts down cleanly on SIGTERM (not just Ctrl-C), terminating its `graphify` child instead of orphaning it.
+- `GraphNav` now reads graphs that use an `edges` key instead of `links`, matching every other reader.
+- `.env` files saved with a UTF-8 BOM are parsed correctly; `OPENAI_KEY`/`GEMINI_KEY`/`DEEPSEEK_KEY` are now accepted as aliases like `ANTHROPIC_KEY`.
+- All generated files are written/read as UTF-8 explicitly, fixing crashes on Windows default encodings.
+- Ctrl-C during `graphnav map` exits cleanly instead of printing a traceback.
+- `graphnav doctor` recognizes single-project (flat) repos instead of failing the services check.
+- Truncated inline context packs no longer emit unbalanced code fences.
+
+---
+
 ## [1.2.2] — 2026-06-12
 
 ### Added

@@ -11,7 +11,7 @@ from codex_graph.graph_query import _tokenize
 class GraphNav:
     def __init__(self, graph_path: str, skip_patterns: list[str] | None = None, graph: dict | None = None):
         if graph is None:
-            with open(graph_path) as f:
+            with open(graph_path, encoding="utf-8") as f:
                 graph = json.load(f)
         self.skip = skip_patterns or []
         self._label_index = None
@@ -27,7 +27,10 @@ class GraphNav:
                 self.file2ids[sf].append(nid)
         self.in_edges: dict[object, list] = defaultdict(list)
         self.out_edges: dict[object, list] = defaultdict(list)
-        for e in graph.get("links", []):
+        links = graph.get("links")
+        if links is None:
+            links = graph.get("edges", [])
+        for e in links or []:
             s, t = e.get("source"), e.get("target")
             if s is None or t is None:
                 continue
@@ -104,12 +107,18 @@ class GraphNav:
         return hits
 
     def neighbors(self, symbol: str, k: int = 12) -> dict:
-        q = set(_tokenize(symbol))
-        best, best_ov = None, 0
-        for nid, n in self.id2node.items():
-            ov = len(q & set(_tokenize(n.get("label", ""))))
-            if ov > best_ov:
-                best, best_ov = nid, ov
+        exact = self._labels().get(symbol.lower())
+        if exact:
+            best = exact[0]
+        else:
+            q = set(_tokenize(symbol))
+            best, best_score = None, (0, 0.0)
+            for nid, n in self.id2node.items():
+                toks = set(_tokenize(n.get("label", "")))
+                ov = len(q & toks)
+                score = (ov, ov / (len(toks) or 1))
+                if score > best_score:
+                    best, best_score = nid, score
         fuzzy = False
         if best is None:
             fuzzy_ids = self._fuzzy_ids(symbol, n=1)

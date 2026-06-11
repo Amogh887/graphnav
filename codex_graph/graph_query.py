@@ -92,7 +92,7 @@ class GraphIndex:
         graph: dict | None = None,
     ):
         if graph is None:
-            with open(graph_path) as f:
+            with open(graph_path, encoding="utf-8") as f:
                 graph = json.load(f)
 
         nodes = graph.get("nodes", [])
