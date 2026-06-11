@@ -27,13 +27,22 @@ GraphNav solves this by:
 
 ---
 
-## Install
+## Setup is one command
 
 ```bash
 pip install graphnav
+graphnav
 ```
 
-Requires Python ≥ 3.11. Pulls `graphifyy` (the `graphify` binary) automatically.
+That's the whole setup. Run `graphnav` from your project root and it:
+
+1. Auto-detects your project — a **single folder** or a **monorepo** of services
+2. Builds the knowledge graph
+3. Writes the agent instruction files
+
+Then open the repo in your AI coding tool and start working. **There is nothing else to run.**
+
+Requires Python ≥ 3.11. Pulls `graphifyy` (the `graphify` binary) automatically — including under `pipx`, `--user`, and virtualenv installs.
 
 **API key:** Place a `.env` file anywhere up the directory tree from your project (or inside any service subfolder). graphnav walks up and down to find it:
 
@@ -42,22 +51,7 @@ OPENAI_API_KEY=sk-...
 ANTHROPIC_KEY=sk-ant-...
 ```
 
----
-
-## Quickstart
-
-```bash
-# In your monorepo root — detects services, builds graphs, writes agent instructions
-graphnav map
-
-# Get a context pack for a task (free, no LLM, ~instant)
-graphnav context "add a critique scoring function to the coach"
-
-# Keep graphs live as you edit
-graphnav watch
-```
-
-After `map`, every AI agent in the repo has access to:
+After running `graphnav`, every AI agent in the repo has access to:
 
 - **`CLAUDE.md`** — picked up by Claude Code
 - **`AGENTS.md`** — picked up by OpenAI Codex CLI
@@ -66,13 +60,34 @@ After `map`, every AI agent in the repo has access to:
 - **`<service>/graphify-out/BRIDGES.md`** — exact cross-service call sites with line numbers
 - **`graphify-out/MONOREPO_MAP.md`** — overview of all services and their connections
 
+### Optional
+
+```bash
+graphnav watch     # keep the graph live as you edit
+graphnav doctor    # diagnose the setup if something looks wrong
+```
+
 ---
 
 ## Commands
 
+> **You only need `graphnav`.** Running it bare does the full setup (it runs `map` for you). `watch` and `doctor` are the only other commands you'd type by hand. Everything below `graphnav watch` — `context`, `serve`, `find`, `neighbors`, `impact` — is meant for your **AI agent** to call automatically (via the generated instruction files or the MCP server), not for you to run manually. They're documented here for completeness.
+
+### `graphnav` (just this)
+
+From your project root, run `graphnav` with no arguments. It auto-detects whether you have a single-folder project or a monorepo, builds the knowledge graph, writes all agent instruction files, and stops. This is the one command you run.
+
+```
+graphnav
+```
+
+For a single-folder project it maps the whole repo as one graph; for a monorepo it builds per-service graphs and cross-service bridges. Equivalent to running `graphnav map` explicitly.
+
+---
+
 ### `graphnav map`
 
-Builds the knowledge graph and generates all agent instruction files.
+The build step that bare `graphnav` runs for you. Builds the knowledge graph and generates all agent instruction files.
 
 ```
 graphnav map [--root PATH] [--backend BACKEND] [--dry-run]
@@ -212,7 +227,7 @@ It checks the `graphify` binary, the config file (and reports any validation war
 
 ### `graphnav` (no subcommand)
 
-If run with no arguments in a monorepo root, auto-detects services and runs `map` automatically. If a prompt is given, falls through to the context-injection path for the Codex CLI.
+Run with no arguments from any project root, it auto-detects the project shape (single folder or monorepo) and runs the full setup automatically. If a prompt is given, it falls through to the context-injection path for the Codex CLI.
 
 ---
 
@@ -344,7 +359,7 @@ ANTHROPIC_KEY=sk-ant-...
 Then:
 
 ```bash
-graphnav map          # one-time setup, or re-run after large refactors
+graphnav              # one-time setup, or re-run after large refactors
 graphnav watch        # optional: keep graphs live during active development
 ```
 

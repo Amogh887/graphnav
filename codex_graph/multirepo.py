@@ -17,10 +17,46 @@ def find_graphify() -> str | None:
     path = shutil.which("graphify")
     if path:
         return path
-    candidate = os.path.join(os.path.dirname(sys.executable), "graphify")
-    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-        return candidate
+    exe = "graphify.exe" if os.name == "nt" else "graphify"
+    search_dirs = [os.path.dirname(sys.executable)]
+    import sysconfig
+
+    for scheme in sysconfig.get_scheme_names():
+        try:
+            d = sysconfig.get_path("scripts", scheme)
+        except Exception:
+            d = None
+        if d:
+            search_dirs.append(d)
+    seen: set[str] = set()
+    for d in search_dirs:
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        candidate = os.path.join(d, exe)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
     return None
+
+
+def resolve_services(
+    root: str,
+    marker_files: list[str],
+    extra_skip_dirs: list[str] | None = None,
+) -> tuple[list[ServiceInfo], bool]:
+    services = detect_services(root, marker_files, extra_skip_dirs)
+    if services:
+        return services, False
+    skip_dirs = SKIP_DIRS | frozenset(extra_skip_dirs or ())
+    if _has_source_files(root, skip_dirs=skip_dirs):
+        name = os.path.basename(os.path.abspath(root).rstrip(os.sep)) or "repo"
+        root_service = ServiceInfo(
+            name=name,
+            abs_path=root,
+            graph_path=_overarching_graph_path(root),
+        )
+        return [root_service], True
+    return [], False
 
 
 def _warn(msg: str) -> None:
@@ -816,9 +852,13 @@ def _refresh(
     root: str,
     services: list[ServiceInfo],
     overarching_graph_path: str,
+    single: bool = False,
 ) -> dict[str, list[BridgeRow]]:
-    partition_graph(overarching_graph_path, services)
-    bridges = analyze_bridges(overarching_graph_path, services)
+    if single:
+        bridges = {s.name: [] for s in services}
+    else:
+        partition_graph(overarching_graph_path, services)
+        bridges = analyze_bridges(overarching_graph_path, services)
     for svc in services:
         write_bridges_md(svc, bridges[svc.name])
         write_symbols_md(svc)
@@ -840,13 +880,14 @@ def run_map(
         print("Error: 'graphify' not found. Install with: pip install graphifyy", file=sys.stderr)
         return 1
 
-    services = detect_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)
+    services, single = resolve_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)
     if not services:
-        print(f"No services detected in {root}. Add code to subdirectories (or marker files like package.json/pyproject.toml).", file=sys.stderr)
+        print(f"No source code found in {root}. Run graphnav from a directory that contains code.", file=sys.stderr)
         return 1
 
+    shape = "whole repo (single project)" if single else f"{len(services)} service(s): {', '.join(s.name for s in services)}"
     if dry_run:
-        print(f"Detected {len(services)} service(s):")
+        print(f"Detected {shape}:")
         for svc in services:
             print(f"  {svc.name}  {svc.abs_path}")
         print("[dry-run] No graphify calls made.")
@@ -856,23 +897,29 @@ def run_map(
     env = _build_subprocess_env(root)
     overarching_path = _overarching_graph_path(root)
 
-    print(f"[graphnav] Building overarching graph across {len(services)} service(s): {', '.join(s.name for s in services)}", file=sys.stderr)
+    print(f"[graphnav] Building knowledge graph for {shape} ...", file=sys.stderr)
     rc = build_overarching_graph(root, graphify_path, backend, env=env)
     if rc != 0 or not os.path.exists(overarching_path):
-        print(f"Error: overarching graphify extraction failed (exit {rc}).", file=sys.stderr)
+        print(f"Error: graphify extraction failed (exit {rc}).", file=sys.stderr)
         print("  Ensure an API key is available (e.g. ANTHROPIC_API_KEY or ANTHROPIC_KEY in a .env file).", file=sys.stderr)
         return 1
 
-    bridges = _refresh(root, services, overarching_path)
+    bridges = _refresh(root, services, overarching_path, single=single)
     total_bridges = sum(len(rows) for rows in bridges.values())
 
-    print(f"\nDone. {len(services)} service(s) mapped, {total_bridges} cross-service connection(s) found.")
-    print(f"  Overarching graph    : {overarching_path}")
-    for svc in services:
-        to = ", ".join(svc.bridges_to) if svc.bridges_to else "none"
-        print(f"  {svc.name}/graphify-out/  (bridges -> {to})")
-    print(f"  Monorepo map         : {os.path.join(root, 'graphify-out', 'MONOREPO_MAP.md')}")
-    print(f"  Copilot instructions : {os.path.join(root, '.github', 'copilot-instructions.md')}")
+    print(f"\nSetup complete. Your AI coding agents are now configured for this repo.")
+    if single:
+        print(f"  Knowledge graph      : {overarching_path}")
+        print(f"  Symbol index         : {os.path.join(root, 'graphify-out', 'SYMBOLS.md')}")
+    else:
+        print(f"  {len(services)} service(s) mapped, {total_bridges} cross-service connection(s) found.")
+        print(f"  Overarching graph    : {overarching_path}")
+        for svc in services:
+            to = ", ".join(svc.bridges_to) if svc.bridges_to else "none"
+            print(f"  {svc.name}/graphify-out/  (bridges -> {to})")
+    print(f"  Agent instructions   : CLAUDE.md, AGENTS.md, .github/copilot-instructions.md")
+    print(f"\nNothing else to run. Open the repo in your AI coding tool and start working.")
+    print(f"(Optional: `graphnav watch` keeps the graph live as you edit.)")
     return 0
 
 
@@ -887,9 +934,9 @@ def run_watch(
         print("Error: 'graphify' not found. Install with: pip install graphifyy", file=sys.stderr)
         return 1
 
-    services = detect_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)
+    services, single = resolve_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)
     if not services:
-        print(f"No services detected in {root}.", file=sys.stderr)
+        print(f"No source code found in {root}.", file=sys.stderr)
         return 1
 
     backend = backend_override or mono_cfg.graphify_backend
@@ -897,13 +944,13 @@ def run_watch(
     overarching_path = _overarching_graph_path(root)
 
     if not os.path.exists(overarching_path):
-        print(f"[graphnav] Bootstrapping overarching graph for {len(services)} service(s) ...", file=sys.stderr)
+        print(f"[graphnav] Bootstrapping knowledge graph ...", file=sys.stderr)
         rc = build_overarching_graph(root, graphify_path, backend, env=env)
         if rc != 0 or not os.path.exists(overarching_path):
             print(f"Error: bootstrap extraction failed (exit {rc}).", file=sys.stderr)
             return 1
 
-    _refresh(root, services, overarching_path)
+    _refresh(root, services, overarching_path, single=single)
 
     def _start_watch() -> subprocess.Popen:
         return subprocess.Popen(
@@ -937,8 +984,8 @@ def run_watch(
                     last_mtime = mtime
                     pending_mtime = None
                     ts = time.strftime("%H:%M:%S")
-                    print(f"[graphnav] {ts} graph updated — re-partitioning and re-analyzing bridges ...", file=sys.stderr)
-                    _refresh(root, services, overarching_path)
+                    print(f"[graphnav] {ts} graph updated — refreshing symbols and bridges ...", file=sys.stderr)
+                    _refresh(root, services, overarching_path, single=single)
                 else:
                     pending_mtime = mtime
             elif mtime != last_mtime:

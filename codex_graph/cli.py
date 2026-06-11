@@ -51,13 +51,16 @@ def _auto_map_if_needed(cfg_path: str | None) -> None:
 
     cfg = load_config(cfg_path)
     root = os.path.abspath(".")
-    services = multirepo.detect_services(root, cfg.mono.marker_files, cfg.mono.extra_skip_dirs)
+    services, single = multirepo.resolve_services(root, cfg.mono.marker_files, cfg.mono.extra_skip_dirs)
     if not services:
-        return
+        print("[graphnav] No source code found here. Run graphnav from your project's root directory.", file=sys.stderr)
+        sys.exit(1)
 
-    names = ", ".join(s.name for s in services)
-    print(f"[graphnav] Detected {len(services)} service(s): {names}")
-    print(f"[graphnav] Running 'graphnav map' to build knowledge graphs ...", file=sys.stderr)
+    if single:
+        print(f"[graphnav] Single project detected. Building knowledge graph ...", file=sys.stderr)
+    else:
+        names = ", ".join(s.name for s in services)
+        print(f"[graphnav] Detected {len(services)} service(s): {names}. Building knowledge graphs ...", file=sys.stderr)
     rc = multirepo.run_map(root=root, mono_cfg=cfg.mono)
     sys.exit(rc)
 
@@ -216,16 +219,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="graphnav",
         description=(
-            "Codex CLI with knowledge-graph context injection for monorepos.\n\n"
-            "First-run (after pip install): just run 'graphnav' or 'graphnav map'\n"
-            "in your monorepo root — services are auto-detected and graphs are built.\n\n"
-            "Subcommands:\n"
-            "  map      Build per-service graphs and cross-service bridge notes\n"
-            "  watch    Keep graphs and bridge notes up-to-date as files change\n"
-            "  context  Print a token-budgeted context pack for a task (free, no LLM)\n"
-            "  serve    Run the MCP server so AI agents call the graph tools natively\n"
-            "  find     Find symbols by query; neighbors/impact show a symbol's blast radius\n"
-            "  doctor   Diagnose the setup (graphify binary, config, graph, API key, cache)"
+            "GraphNav — knowledge-graph context for AI coding agents.\n\n"
+            "Setup is ONE command. From your project root, just run:\n"
+            "    graphnav\n"
+            "It auto-detects your project (single folder or monorepo), builds the\n"
+            "knowledge graph, and writes the agent instruction files. Nothing else\n"
+            "to run — open the repo in your AI coding tool and start working.\n\n"
+            "Optional commands:\n"
+            "  watch    Keep the graph live as you edit\n"
+            "  doctor   Diagnose the setup if something looks wrong\n\n"
+            "Commands your AI agent calls for you (you rarely run these by hand):\n"
+            "  context  Token-budgeted context pack for a task (free, no LLM)\n"
+            "  serve    MCP server exposing the graph tools natively\n"
+            "  find / neighbors / impact   Symbol lookup and blast-radius queries\n"
+            "  map      The build step that `graphnav` runs for you"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -243,8 +250,7 @@ def main() -> None:
     if not prompt:
         if sys.stdin.isatty():
             _auto_map_if_needed(args.config)
-            parser.print_help()
-            sys.exit(1)
+            return
         prompt = sys.stdin.read().strip()
     if not prompt:
         parser.print_help()

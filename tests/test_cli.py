@@ -170,7 +170,7 @@ class TestAutoMap:
         assert exc.value.code == 0
         assert str(tmp_path) == called_with["root"]
 
-    def test_no_args_without_services_shows_help(self, tmp_path, monkeypatch, capsys):
+    def test_no_args_without_source_exits_with_guidance(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(sys, "argv", ["codex-graph"])
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
@@ -178,8 +178,27 @@ class TestAutoMap:
             from codex_graph.cli import main
             main()
         assert exc.value.code == 1
-        out = capsys.readouterr().out
-        assert "graphnav" in out
+        err = capsys.readouterr().err
+        assert "No source code" in err
+
+    def test_no_args_flat_repo_runs_map(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "app.py").write_text("def main():\n    return 1\n")
+        monkeypatch.setattr(sys, "argv", ["codex-graph"])
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+
+        called = {}
+
+        def fake_run_map(root, mono_cfg, backend_override=None, dry_run=False):
+            called["root"] = root
+            return 0
+
+        monkeypatch.setattr("codex_graph.multirepo.run_map", fake_run_map)
+        with pytest.raises(SystemExit) as exc:
+            from codex_graph.cli import main
+            main()
+        assert exc.value.code == 0
+        assert called["root"] == str(tmp_path)
 
 
 class TestExistingPromptPathUnaffected:
@@ -275,7 +294,7 @@ class TestDoctorDispatch:
     def test_doctor_empty_root_fails(self, tmp_path, monkeypatch, capsys):
         from codex_graph import doctor
 
-        monkeypatch.setattr(doctor.shutil, "which", lambda _: None)
+        monkeypatch.setattr(doctor, "find_graphify", lambda: None)
         monkeypatch.setattr(sys, "argv", ["graphnav", "doctor", "--root", str(tmp_path)])
         with pytest.raises(SystemExit) as exc:
             from codex_graph.cli import main

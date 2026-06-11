@@ -28,6 +28,7 @@ from codex_graph.multirepo import (
     build_playbook_text,
     detect_services,
     partition_graph,
+    resolve_services,
     run_extract,
     run_map,
     run_watch,
@@ -187,6 +188,27 @@ class TestDetectServices:
         assert result[0].abs_path == str(d)
         assert result[0].graph_path == str(d / "graphify-out" / "graph.json")
         assert result[0].bridges_to == []
+
+    def test_resolve_falls_back_to_whole_repo_when_no_subdir_services(self, tmp_path):
+        (tmp_path / "app.py").write_text("def main():\n    return 1\n")
+        services, single = resolve_services(str(tmp_path), ["pyproject.toml"])
+        assert single is True
+        assert len(services) == 1
+        assert services[0].abs_path == str(tmp_path)
+        assert services[0].graph_path == str(tmp_path / "graphify-out" / "graph.json")
+
+    def test_resolve_prefers_subdir_services(self, tmp_path):
+        d = tmp_path / "svc-a"
+        d.mkdir()
+        (d / "pyproject.toml").touch()
+        services, single = resolve_services(str(tmp_path), ["pyproject.toml"])
+        assert single is False
+        assert [s.name for s in services] == ["svc-a"]
+
+    def test_resolve_empty_dir_returns_nothing(self, tmp_path):
+        services, single = resolve_services(str(tmp_path), ["pyproject.toml"])
+        assert services == []
+        assert single is False
 
     def test_services_returned_in_sorted_order(self, tmp_path):
         for name in ("zebra", "alpha", "middle"):
@@ -1182,6 +1204,7 @@ class TestRunMap:
             return []
 
         monkeypatch.setattr("codex_graph.multirepo.detect_services", fake_detect)
+        monkeypatch.setattr("codex_graph.multirepo._has_source_files", lambda *a, **k: False)
         run_map(".", MonoConfig())
         assert os.path.isabs(roots_seen[0])
 

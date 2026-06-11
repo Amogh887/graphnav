@@ -4,6 +4,20 @@ All notable changes to GraphNav are documented here. Versions follow [Semantic V
 
 ---
 
+## [1.2.2] — 2026-06-12
+
+### Added
+- **One-command setup.** Running bare `graphnav` from any project root now does the entire setup — auto-detects the project shape, builds the graph, and writes all agent instruction files — then stops with a "nothing else to run" message. No need to know `map`.
+- **Single-folder project support.** `graphnav` now works on a flat repo (code at the root with no service subfolders), mapping the whole repo as one graph. Previously it errored with "No services detected".
+
+### Changed
+- README and CLI help reframed around the single `graphnav` command; `context`/`serve`/`find`/`neighbors`/`impact` are now clearly labeled as agent-facing commands you rarely run by hand.
+
+### Fixed
+- `graphify` binary lookup now also searches every install scheme's scripts directory (via `sysconfig`), so it resolves under `pipx`, `--user`, and other installs where the scripts dir isn't on `PATH`.
+
+---
+
 ## [1.2.1] — 2026-06-11
 
 ### Fixed

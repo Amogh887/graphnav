@@ -27,7 +27,7 @@ def fresh_memo():
 
 @pytest.fixture
 def fake_graphify(monkeypatch):
-    monkeypatch.setattr(doctor.shutil, "which", lambda _: "/usr/bin/graphify")
+    monkeypatch.setattr(doctor, "find_graphify", lambda: "/usr/bin/graphify")
     monkeypatch.setattr(
         doctor.subprocess, "run",
         lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="graphify 0.9", stderr=""),
@@ -61,7 +61,7 @@ class TestDoctorAllPass:
 
 class TestDoctorGraphifyMissing:
     def test_missing_binary_fails(self, healthy_repo, monkeypatch, capsys):
-        monkeypatch.setattr(doctor.shutil, "which", lambda _: None)
+        monkeypatch.setattr(doctor, "find_graphify", lambda: None)
         rc = run_doctor(str(healthy_repo))
         out = capsys.readouterr().out
         assert rc == 1
