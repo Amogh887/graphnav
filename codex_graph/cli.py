@@ -170,6 +170,19 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
     sys.exit(0)
 
 
+def _run_doctor_command(argv: list[str]) -> None:
+    from codex_graph.doctor import run_doctor
+
+    parser = argparse.ArgumentParser(
+        prog="graphnav doctor",
+        description="Diagnose a graphnav setup: graphify binary, config, graph, API key, services, cache",
+    )
+    parser.add_argument("--root", default=".", metavar="PATH", help="Repo root (default: current directory)")
+    parser.add_argument("--config", default=None, metavar="PATH", help="Path to config.toml")
+    args = parser.parse_args(argv)
+    sys.exit(run_doctor(root=args.root, config_path=args.config))
+
+
 def _run_serve_command(argv: list[str]) -> None:
     from codex_graph import mcp_server
 
@@ -196,6 +209,9 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("find", "neighbors", "impact"):
         _run_graph_query_command(sys.argv[1], sys.argv[2:])
         return
+    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
+        _run_doctor_command(sys.argv[2:])
+        return
 
     parser = argparse.ArgumentParser(
         prog="graphnav",
@@ -208,7 +224,8 @@ def main() -> None:
             "  watch    Keep graphs and bridge notes up-to-date as files change\n"
             "  context  Print a token-budgeted context pack for a task (free, no LLM)\n"
             "  serve    Run the MCP server so AI agents call the graph tools natively\n"
-            "  find     Find symbols by query; neighbors/impact show a symbol's blast radius"
+            "  find     Find symbols by query; neighbors/impact show a symbol's blast radius\n"
+            "  doctor   Diagnose the setup (graphify binary, config, graph, API key, cache)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

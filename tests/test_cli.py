@@ -269,3 +269,16 @@ class TestIndexCacheUsed:
             main()
         assert calls["n"] == 0
         assert "create_incident" in capsys.readouterr().out
+
+
+class TestDoctorDispatch:
+    def test_doctor_empty_root_fails(self, tmp_path, monkeypatch, capsys):
+        from codex_graph import doctor
+
+        monkeypatch.setattr(doctor.shutil, "which", lambda _: None)
+        monkeypatch.setattr(sys, "argv", ["graphnav", "doctor", "--root", str(tmp_path)])
+        with pytest.raises(SystemExit) as exc:
+            from codex_graph.cli import main
+            main()
+        assert exc.value.code == 1
+        assert "[fail]" in capsys.readouterr().out
