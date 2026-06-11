@@ -6,8 +6,16 @@ from pathlib import Path
 import pytest
 
 from codex_graph import GraphNotFoundError
-from codex_graph.graph_query import GraphIndex, _tokenize, load_index, query_files
-from tests.conftest import write_graph
+from codex_graph.graph_query import (
+    DEFAULT_RELATION_WEIGHTS,
+    GraphIndex,
+    UNKNOWN_RELATION_WEIGHT,
+    _tokenize,
+    load_index,
+    merge_relation_weights,
+    query_files,
+)
+from tests.conftest import make_graph_dict, write_graph
 
 
 class TestTokenize:
@@ -266,3 +274,114 @@ class TestQueryFiles:
         results = query_files("user service", idx, 5)
         for r in results:
             assert r.score > 0
+
+
+class TestEdgeRelationWeights:
+    _LINKS = [
+        {"source": "c1", "target": "h1", "relation": "calls"},
+        {"source": "r1", "target": "h2", "relation": "references"},
+        {"source": "u1", "target": "h3", "relation": "frobnicates"},
+    ]
+
+    def _build(self, tmp_path: Path, relation_weights=None) -> GraphIndex:
+        nodes = [
+            {"id": "h1", "label": "alpha beta", "source_file": "hot1.py", "file_type": "code", "community": 0},
+            {"id": "h2", "label": "alpha beta", "source_file": "hot2.py", "file_type": "code", "community": 0},
+            {"id": "h3", "label": "alpha beta", "source_file": "hot3.py", "file_type": "code", "community": 0},
+            {"id": "c1", "label": "zzz", "source_file": "calls_linked.py", "file_type": "code", "community": 0},
+            {"id": "r1", "label": "zzz", "source_file": "refs_linked.py", "file_type": "code", "community": 0},
+            {"id": "u1", "label": "zzz", "source_file": "unknown_linked.py", "file_type": "code", "community": 0},
+        ]
+        graph_path = tmp_path / "graph.json"
+        write_graph(graph_path, nodes=nodes, links=self._LINKS)
+        return GraphIndex(str(graph_path), [], relation_weights)
+
+    def _scores(self, idx: GraphIndex) -> dict[str, float]:
+        ranked = idx.rank("alpha beta", 10, 0.0, 1.5, 0.75, keep_ratio=0.0, edge_boost_weight=0.5)
+        return {r.source_file: r.score for r in ranked}
+
+    def test_calls_neighbor_boosts_more_than_references(self, tmp_path):
+        scores = self._scores(self._build(tmp_path))
+        assert scores["calls_linked.py"] > scores["refs_linked.py"]
+
+    def test_user_override_flips_relation_priority(self, tmp_path):
+        idx = self._build(tmp_path, relation_weights={"references": 1.0, "calls": 0.1})
+        scores = self._scores(idx)
+        assert scores["refs_linked.py"] > scores["calls_linked.py"]
+
+    def test_unknown_relation_gets_unknown_weight(self, tmp_path):
+        idx = self._build(tmp_path)
+        assert idx.file_neighbors["unknown_linked.py"]["hot3.py"] == UNKNOWN_RELATION_WEIGHT
+        scores = self._scores(idx)
+        assert scores["calls_linked.py"] > scores["unknown_linked.py"] > scores["refs_linked.py"]
+
+    def test_merge_keeps_defaults_for_unspecified_keys(self):
+        merged = merge_relation_weights({"references": 1.0})
+        assert merged["references"] == 1.0
+        assert merged["calls"] == DEFAULT_RELATION_WEIGHTS["calls"]
+        assert merged["imports"] == DEFAULT_RELATION_WEIGHTS["imports"]
+        assert merged["uses"] == DEFAULT_RELATION_WEIGHTS["uses"]
+
+
+class TestRecencyBoost:
+    def _build(self, tmp_path: Path) -> GraphIndex:
+        nodes = [
+            {"id": "n1", "label": "alpha beta alpha", "source_file": "first.py", "file_type": "code", "community": 0},
+            {"id": "n2", "label": "alpha beta", "source_file": "second.py", "file_type": "code", "community": 0},
+            {"id": "n3", "label": "zzz unrelated", "source_file": "zero.py", "file_type": "code", "community": 0},
+        ]
+        graph_path = tmp_path / "graph.json"
+        write_graph(graph_path, nodes=nodes)
+        return GraphIndex(str(graph_path), [])
+
+    def test_recency_reorders_near_equal_files(self, tmp_path):
+        idx = self._build(tmp_path)
+        without = idx.rank("alpha beta", 10, 0.0, 1.5, 0.75)
+        boosted = idx.rank(
+            "alpha beta", 10, 0.0, 1.5, 0.75,
+            recency={"second.py": 1.0}, recency_boost_weight=0.5,
+        )
+        assert without[0].source_file == "first.py"
+        assert boosted[0].source_file == "second.py"
+
+    def test_recency_none_matches_omitting(self, tmp_path):
+        idx = self._build(tmp_path)
+        with_none = idx.rank(
+            "alpha beta", 10, 0.0, 1.5, 0.75,
+            recency=None, recency_boost_weight=0.5,
+        )
+        assert with_none == idx.rank("alpha beta", 10, 0.0, 1.5, 0.75)
+
+    def test_zero_base_score_file_never_appears(self, tmp_path):
+        idx = self._build(tmp_path)
+        ranked = idx.rank(
+            "alpha beta", 10, 0.0, 1.5, 0.75,
+            recency={"zero.py": 1.0}, recency_boost_weight=5.0,
+        )
+        assert "zero.py" not in [r.source_file for r in ranked]
+
+    def test_query_files_forwards_recency_params(self, tmp_path):
+        idx = self._build(tmp_path)
+        results = query_files(
+            "alpha beta", idx, 10,
+            recency={"second.py": 1.0}, recency_boost_weight=0.5,
+        )
+        assert results[0].source_file == "second.py"
+
+
+class TestGraphParam:
+    def test_graph_dict_ranks_identically_to_file(self, tmp_path):
+        nodes = [
+            {"id": "n1", "label": "user model schema", "source_file": "models.py", "file_type": "code", "community": 0},
+            {"id": "n2", "label": "auth service token", "source_file": "auth.py", "file_type": "code", "community": 1},
+        ]
+        links = [{"source": "n1", "target": "n2", "relation": "calls"}]
+        graph_path = tmp_path / "graph.json"
+        write_graph(graph_path, nodes=nodes, links=links)
+        from_file = GraphIndex(str(graph_path), [])
+        from_dict = GraphIndex(
+            str(tmp_path / "missing.json"), [], graph=make_graph_dict(nodes, links)
+        )
+        ranked_dict = from_dict.rank("user model", 10, 2.0, 1.5, 0.75)
+        assert ranked_dict
+        assert ranked_dict == from_file.rank("user model", 10, 2.0, 1.5, 0.75)

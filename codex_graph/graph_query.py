@@ -32,6 +32,20 @@ GENERATED_PATTERNS = (
     ".g.dart", "_pb.dart", "/migrations/",
 )
 
+DEFAULT_RELATION_WEIGHTS = {
+    "calls": 1.0, "inherits": 1.0,
+    "imports": 0.6, "imports_from": 0.6, "method": 0.6, "contains": 0.6,
+    "references": 0.3, "uses": 0.3,
+}
+UNKNOWN_RELATION_WEIGHT = 0.5
+
+
+def merge_relation_weights(user: dict[str, float] | None) -> dict[str, float]:
+    merged = dict(DEFAULT_RELATION_WEIGHTS)
+    if user:
+        merged.update(user)
+    return merged
+
 
 def _is_rankable(source_file: str) -> bool:
     lower = source_file.lower()
@@ -70,16 +84,24 @@ def _tokenize(s: str) -> list[str]:
 class GraphIndex:
     _TYPE_WEIGHT = {"rationale": 3, "document": 2, "concept": 2, "code": 1}
 
-    def __init__(self, graph_path: str, skip_patterns: list[str]):
-        with open(graph_path) as f:
-            graph = json.load(f)
+    def __init__(
+        self,
+        graph_path: str,
+        skip_patterns: list[str],
+        relation_weights: dict[str, float] | None = None,
+        graph: dict | None = None,
+    ):
+        if graph is None:
+            with open(graph_path) as f:
+                graph = json.load(f)
 
         nodes = graph.get("nodes", [])
+        weights = merge_relation_weights(relation_weights)
 
         self.file_tokens: dict[str, list[str]] = defaultdict(list)
         self.file_communities: dict[str, set[int]] = defaultdict(set)
         self.community_tokens: dict[int, set[str]] = defaultdict(set)
-        self.file_neighbors: dict[str, set[str]] = defaultdict(set)
+        self.file_neighbors: dict[str, dict[str, float]] = defaultdict(dict)
 
         id2file: dict[object, str] = {}
         for n in nodes:
@@ -99,8 +121,10 @@ class GraphIndex:
             s = id2file.get(e.get("source"))
             t = id2file.get(e.get("target"))
             if s and t and s != t:
-                self.file_neighbors[s].add(t)
-                self.file_neighbors[t].add(s)
+                w = weights.get(e.get("relation") or "", UNKNOWN_RELATION_WEIGHT)
+                if w > self.file_neighbors[s].get(t, 0.0):
+                    self.file_neighbors[s][t] = w
+                    self.file_neighbors[t][s] = w
 
         for n in nodes:
             sf = n.get("source_file", "")
@@ -169,6 +193,8 @@ class GraphIndex:
         bm25_b: float,
         keep_ratio: float = 0.3,
         edge_boost_weight: float = 0.4,
+        recency: dict[str, float] | None = None,
+        recency_boost_weight: float = 0.0,
     ) -> list[RankedFile]:
         qtoks = _tokenize(prompt)
         if not qtoks:
@@ -178,10 +204,15 @@ class GraphIndex:
             + self._community_boost(qtoks, sf, community_boost_weight)
             for sf in self.file_tokens
         }
+        if recency and recency_boost_weight > 0:
+            base = {
+                sf: sc * (1 + recency_boost_weight * recency.get(sf, 0.0))
+                for sf, sc in base.items()
+            }
         if edge_boost_weight > 0 and self.file_neighbors:
             scores = {
                 sf: sc + edge_boost_weight * max(
-                    (base.get(n, 0.0) for n in self.file_neighbors.get(sf, ())),
+                    (w * base.get(n, 0.0) for n, w in self.file_neighbors.get(sf, {}).items()),
                     default=0.0,
                 )
                 for sf, sc in base.items()
@@ -199,13 +230,17 @@ class GraphIndex:
         ]
 
 
-def load_index(graph_path: str, skip_patterns: list[str]) -> GraphIndex:
+def load_index(
+    graph_path: str,
+    skip_patterns: list[str],
+    relation_weights: dict[str, float] | None = None,
+) -> GraphIndex:
     if not os.path.exists(graph_path):
         raise GraphNotFoundError(
             f"graph.json not found: {graph_path}\n"
             "Run Graphify on the repo first, or set [graph] path in config.toml"
         )
-    return GraphIndex(graph_path, skip_patterns)
+    return GraphIndex(graph_path, skip_patterns, relation_weights)
 
 
 def query_files(
@@ -217,7 +252,10 @@ def query_files(
     bm25_b: float = 0.75,
     keep_ratio: float = 0.3,
     edge_boost_weight: float = 0.4,
+    recency: dict[str, float] | None = None,
+    recency_boost_weight: float = 0.0,
 ) -> list[RankedFile]:
     return index.rank(
-        prompt, top_k, community_boost_weight, bm25_k1, bm25_b, keep_ratio, edge_boost_weight
+        prompt, top_k, community_boost_weight, bm25_k1, bm25_b, keep_ratio, edge_boost_weight,
+        recency=recency, recency_boost_weight=recency_boost_weight,
     )
