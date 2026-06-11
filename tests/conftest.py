@@ -34,6 +34,11 @@ def make_mock_proc(returncode: int = 0):
     return proc
 
 
+@pytest.fixture(autouse=True)
+def _no_auto_rebuild(monkeypatch):
+    monkeypatch.setenv("GRAPHNAV_NO_AUTO_REBUILD", "1")
+
+
 @pytest.fixture
 def two_svc_root(tmp_path) -> Path:
     for name in ("svc-a", "svc-b"):

@@ -4,6 +4,18 @@ All notable changes to GraphNav are documented here. Versions follow [Semantic V
 
 ---
 
+## [1.3.0] — 2026-06-12
+
+### Added
+- **Automatic background graph rebuilds.** Every graph query (`context`, `find`, `neighbors`, `impact`, and all MCP tools) now checks whether source files changed since the graph was built; if so, it spawns a background `graphnav map` and tells the agent a refresh is underway. The graph stays fresh with zero user action — no daemon required. Concurrent rebuilds are prevented via a pid file and a 60s cooldown.
+- If no graph exists yet when an agent queries, the build starts automatically and the agent is told to retry shortly.
+- Opt out with `auto_rebuild = false` under `[mono]` in `config.toml`, or `GRAPHNAV_NO_AUTO_REBUILD=1`.
+
+### Changed
+- `graphnav watch` is now an optional eager mode (rebuild on every save) rather than the only way to keep the graph fresh.
+
+---
+
 ## [1.2.3] — 2026-06-12
 
 ### Fixed

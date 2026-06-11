@@ -104,6 +104,7 @@ def _run_context_command(argv: list[str]) -> None:
             "task": task,
             "skip_patterns": cfg.graph.skip_patterns,
             "query_cfg": cfg.query,
+            "auto_rebuild": cfg.mono.auto_rebuild,
         }
         if args.files is not None:
             kwargs["top_files"] = args.files
@@ -129,6 +130,7 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
 
     cfg = load_config(args.config)
     root = os.path.abspath(args.root)
+    multirepo.maybe_auto_rebuild(root, enabled=cfg.mono.auto_rebuild)
     graph_path = multirepo._overarching_graph_path(root)
     if not os.path.exists(graph_path):
         print(f"Error: no knowledge graph at {graph_path}. Run `graphnav map` first.", file=sys.stderr)
@@ -137,7 +139,7 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
     if kind == "impact":
         from codex_graph.mcp_server import GraphTools
 
-        tools = GraphTools(root, cfg.graph.skip_patterns, query_cfg=cfg.query)
+        tools = GraphTools(root, cfg.graph.skip_patterns, query_cfg=cfg.query, auto_rebuild=False)
         print(tools.impact(args.term))
         sys.exit(0)
 

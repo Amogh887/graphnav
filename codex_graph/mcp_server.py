@@ -8,7 +8,11 @@ from codex_graph import GraphNotFoundError
 from codex_graph.config import QueryConfig, load_config
 from codex_graph.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
 from codex_graph.graph_nav import GraphNav
-from codex_graph.multirepo import _overarching_graph_path, build_context_pack_inline
+from codex_graph.multirepo import (
+    _overarching_graph_path,
+    build_context_pack_inline,
+    maybe_auto_rebuild,
+)
 
 MAX_REGION_LINES = 200
 
@@ -32,10 +36,12 @@ class GraphTools:
         root: str,
         skip_patterns: list[str] | None = None,
         query_cfg: QueryConfig | None = None,
+        auto_rebuild: bool = True,
     ):
         self.root = os.path.abspath(root)
         self.skip_patterns = skip_patterns or list(DEFAULT_PACK_SKIP_PATTERNS)
         self.query_cfg = query_cfg or QueryConfig()
+        self.auto_rebuild = auto_rebuild
         self.graph_path = _overarching_graph_path(self.root)
 
     @property
@@ -53,10 +59,11 @@ class GraphTools:
     def graph_context(self, task: str) -> str:
         return build_context_pack_inline(
             root=self.root, task=task, skip_patterns=self.skip_patterns,
-            query_cfg=self.query_cfg,
+            query_cfg=self.query_cfg, auto_rebuild=self.auto_rebuild,
         )
 
     def graph_find(self, query: str) -> str:
+        maybe_auto_rebuild(self.root, enabled=self.auto_rebuild)
         if self.nav is None:
             return _NO_GRAPH
         hits = self.nav.find_symbols(query, k=8)
@@ -69,6 +76,7 @@ class GraphTools:
         return "\n".join(lines)
 
     def graph_neighbors(self, symbol: str) -> str:
+        maybe_auto_rebuild(self.root, enabled=self.auto_rebuild)
         if self.nav is None:
             return _NO_GRAPH
         r = self.nav.neighbors(symbol)
@@ -96,6 +104,7 @@ class GraphTools:
             return f"error: {exc}"
 
     def impact(self, symbol: str) -> str:
+        maybe_auto_rebuild(self.root, enabled=self.auto_rebuild)
         if self.nav is None:
             return _NO_GRAPH
         r = self.nav.neighbors(symbol)
@@ -130,7 +139,10 @@ def serve(root: str = ".", config_path: str | None = None) -> int:
         return 1
 
     cfg = load_config(config_path)
-    tools = GraphTools(os.path.abspath(root), cfg.graph.skip_patterns, query_cfg=cfg.query)
+    tools = GraphTools(
+        os.path.abspath(root), cfg.graph.skip_patterns, query_cfg=cfg.query,
+        auto_rebuild=cfg.mono.auto_rebuild,
+    )
     server = FastMCP("graphnav")
 
     @server.tool()

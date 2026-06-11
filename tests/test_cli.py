@@ -123,7 +123,7 @@ class TestContextCommand:
     def test_context_forwards_budget_and_files(self, tmp_path, monkeypatch):
         captured = {}
 
-        def fake_pack(root, task, skip_patterns=None, top_files=None, budget_tokens=None, query_cfg=None):
+        def fake_pack(root, task, skip_patterns=None, top_files=None, budget_tokens=None, query_cfg=None, **kw):
             captured["top_files"] = top_files
             captured["budget_tokens"] = budget_tokens
             return ""

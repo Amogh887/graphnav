@@ -51,6 +51,7 @@ class MonoConfig:
     context_budget_tokens: int = 2000
     context_top_files: int = 8
     extra_skip_dirs: list[str] = field(default_factory=list)
+    auto_rebuild: bool = True
 
 
 @dataclass
@@ -129,6 +130,7 @@ def _apply_toml(cfg: Config, data: dict, warnings: list[str] | None = None) -> C
             context_budget_tokens=m.get("context_budget_tokens", cfg.mono.context_budget_tokens),
             context_top_files=m.get("context_top_files", cfg.mono.context_top_files),
             extra_skip_dirs=m.get("extra_skip_dirs", cfg.mono.extra_skip_dirs),
+            auto_rebuild=m.get("auto_rebuild", cfg.mono.auto_rebuild),
         )
     return cfg
 
@@ -163,6 +165,12 @@ def _coerce_types(cfg: Config, warnings: list[str]) -> None:
             if isinstance(w, bool) or not isinstance(w, (int, float)):
                 warnings.append(f"query.edge_relation_weights.{rel} has invalid value {w!r} — ignoring")
                 del cfg.query.edge_relation_weights[rel]
+    for section, key in (("mono", "auto_rebuild"), ("context", "show_scores")):
+        value = getattr(getattr(cfg, section), key)
+        if not isinstance(value, bool):
+            fallback = getattr(getattr(Config(), section), key)
+            warnings.append(f"{section}.{key} must be true or false — using default {fallback}")
+            setattr(getattr(cfg, section), key, fallback)
     for section, key in (("mono", "marker_files"), ("mono", "extra_skip_dirs"), ("graph", "skip_patterns"), ("codex", "extra_args")):
         value = getattr(getattr(cfg, section), key)
         if not isinstance(value, list) or any(not isinstance(v, str) for v in value):

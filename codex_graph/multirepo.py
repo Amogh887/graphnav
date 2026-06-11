@@ -308,6 +308,81 @@ def run_extract(
     return _stream_proc(proc, timeout)
 
 
+AUTO_REBUILD_COOLDOWN = 60.0
+
+
+def _newest_source_mtime(root: str, max_depth: int = 4) -> float:
+    newest = 0.0
+    base = root.rstrip(os.sep).count(os.sep)
+    for dirpath, dirnames, filenames in os.walk(root):
+        depth = dirpath.count(os.sep) - base
+        if depth >= max_depth:
+            dirnames[:] = []
+        else:
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in SKIP_DIRS and not d.startswith(".")
+            ]
+        for fn in filenames:
+            if os.path.splitext(fn)[1] in SOURCE_EXTENSIONS:
+                try:
+                    mt = os.stat(os.path.join(dirpath, fn)).st_mtime
+                except OSError:
+                    continue
+                if mt > newest:
+                    newest = mt
+    return newest
+
+
+def graph_is_stale(root: str) -> bool:
+    try:
+        graph_mtime = os.stat(_overarching_graph_path(root)).st_mtime
+    except OSError:
+        return True
+    return _newest_source_mtime(root) > graph_mtime + 1.0
+
+
+def maybe_auto_rebuild(root: str, enabled: bool = True) -> bool:
+    if not enabled or os.environ.get("GRAPHNAV_NO_AUTO_REBUILD") == "1":
+        return False
+    root = os.path.abspath(root)
+    if not graph_is_stale(root):
+        return False
+    out_dir = os.path.join(root, "graphify-out")
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError:
+        return False
+    pid_path = os.path.join(out_dir, ".graphnav-rebuild.pid")
+    try:
+        st = os.stat(pid_path)
+        with open(pid_path) as f:
+            pid = int(f.read().strip() or 0)
+        if pid > 0:
+            try:
+                os.kill(pid, 0)
+                return False
+            except OSError:
+                pass
+        if time.time() - st.st_mtime < AUTO_REBUILD_COOLDOWN:
+            return False
+    except (OSError, ValueError):
+        pass
+    log_path = os.path.join(out_dir, "auto-rebuild.log")
+    try:
+        with open(log_path, "ab") as log:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "codex_graph.cli", "map", "--root", root],
+                stdout=log, stderr=log, start_new_session=True,
+                env=_build_subprocess_env(root),
+            )
+        with open(pid_path, "w") as f:
+            f.write(str(proc.pid))
+        return True
+    except OSError:
+        return False
+
+
 def _overarching_graph_path(root: str) -> str:
     return os.path.join(root, "graphify-out", "graph.json")
 
@@ -666,9 +741,18 @@ def build_context_pack(
     from codex_graph.graph_query import query_files
 
     root = os.path.abspath(root)
+    if mono_cfg is None:
+        mono_cfg = MonoConfig()
+    rebuild_started = maybe_auto_rebuild(root, enabled=mono_cfg.auto_rebuild)
     overarching_path = _overarching_graph_path(root)
     if not os.path.exists(overarching_path):
         rel = os.path.relpath(overarching_path, root)
+        if rebuild_started:
+            return (
+                f"# Context for: {task}\n\n"
+                "Knowledge graph is being built automatically in the background — "
+                "retry this in ~30s.\n"
+            )
         return (
             f"# Context for: {task}\n\n"
             f"No knowledge graph found at {rel}.\n"
@@ -679,8 +763,6 @@ def build_context_pack(
         skip_patterns = list(DEFAULT_PACK_SKIP_PATTERNS)
     if query_cfg is None:
         query_cfg = QueryConfig()
-    if mono_cfg is None:
-        mono_cfg = MonoConfig()
 
     degraded = False
     try:
@@ -708,6 +790,8 @@ def build_context_pack(
     note = staleness_note(root)
     if note:
         out_lines += [note, ""]
+    if rebuild_started:
+        out_lines += ["_Source files changed — automatic graph rebuild started in the background._", ""]
     if degraded:
         out_lines.append(
             "_Knowledge graph could not be read (corrupt or invalid graph.json) — "
@@ -787,14 +871,22 @@ def _extract_code_windows(abs_path, lines_wanted, before=2, after=14, max_lines=
 
 
 def build_context_pack_inline(
-    root, task, top_files=3, budget_tokens=2500, skip_patterns=None, query_cfg=None
+    root, task, top_files=3, budget_tokens=2500, skip_patterns=None, query_cfg=None,
+    auto_rebuild=True,
 ):
     from codex_graph.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
     from codex_graph.graph_query import query_files
 
     root = os.path.abspath(root)
+    rebuild_started = maybe_auto_rebuild(root, enabled=auto_rebuild)
     overarching_path = _overarching_graph_path(root)
     if not os.path.exists(overarching_path):
+        if rebuild_started:
+            return (
+                f"# Context for: {task}\n\n"
+                "Knowledge graph is being built automatically in the background — "
+                "retry this in ~30s.\n"
+            )
         return f"# Context for: {task}\n\nNo knowledge graph found.\n"
     if skip_patterns is None:
         skip_patterns = list(DEFAULT_PACK_SKIP_PATTERNS)
@@ -827,6 +919,8 @@ def build_context_pack_inline(
     note = staleness_note(root)
     if note:
         out += [note, ""]
+    if rebuild_started:
+        out += ["_Source files changed — automatic graph rebuild started in the background._", ""]
     out.append(
         "## Relevant code (extracted from the knowledge graph — already in context, do not re-open these files)"
     )

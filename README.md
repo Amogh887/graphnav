@@ -18,6 +18,7 @@ GraphNav solves this by:
 
 ## GraphNav Core Features
 
+- **Always fresh, automatically** — when source files change, the next graph query detects it and rebuilds the graph in the background. No daemon, no manual re-runs, nothing to remember.
 - **Token-budgeted context packs** — `graphnav context "<task>"` returns only the relevant code, inline, with no LLM call.
 - **Native MCP tools** — `graphnav serve` exposes the graph to agents over the Model Context Protocol, refreshed automatically when the graph changes.
 - **Graph-aware ranking** — BM25 plus relation-weighted call-edge expansion and a git-recency nudge, so the file you actually need to edit surfaces even when its text doesn't match the query.
@@ -40,7 +41,7 @@ That's the whole setup. Run `graphnav` from your project root and it:
 2. Builds the knowledge graph
 3. Writes the agent instruction files
 
-Then open the repo in your AI coding tool and start working. **There is nothing else to run.**
+Then open the repo in your AI coding tool and start working. **There is nothing else to run — ever.** When you edit files, the next graph query (from you or your agent) automatically rebuilds the graph in the background, so it never goes stale. Disable with `auto_rebuild = false` under `[mono]` or `GRAPHNAV_NO_AUTO_REBUILD=1`.
 
 Requires Python ≥ 3.11. Pulls `graphifyy` (the `graphify` binary) automatically — including under `pipx`, `--user`, and virtualenv installs.
 
@@ -63,7 +64,7 @@ After running `graphnav`, every AI agent in the repo has access to:
 ### Optional
 
 ```bash
-graphnav watch     # keep the graph live as you edit
+graphnav watch     # eager mode: rebuild on every save instead of at query time
 graphnav doctor    # diagnose the setup if something looks wrong
 ```
 
@@ -308,6 +309,7 @@ Place a `config.toml` in the project root (or pass `--config PATH`):
 ```toml
 [mono]
 graphify_backend = "claude"        # LLM backend for extraction
+auto_rebuild = true                # rebuild the graph in the background when queries find it stale
 watch_poll_interval = 3.0          # seconds between mtime checks in watch mode
 context_budget_tokens = 2000       # token budget for graphnav context output
 context_top_files = 8              # max files returned by context command
