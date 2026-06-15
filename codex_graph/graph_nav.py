@@ -7,6 +7,8 @@ from collections import defaultdict
 
 from codex_graph.graph_query import _tokenize
 
+STRUCTURAL_RELATIONS = frozenset({"contains"})
+
 
 class GraphNav:
     def __init__(self, graph_path: str, skip_patterns: list[str] | None = None, graph: dict | None = None):
@@ -129,12 +131,12 @@ class GraphNav:
         callers, callees = [], []
         for s, rel in self.in_edges.get(best, []):
             sn = self.id2node.get(s, {})
-            if self._skipped(sn.get("source_file", "")):
+            if rel in STRUCTURAL_RELATIONS or self._skipped(sn.get("source_file", "")):
                 continue
             callers.append(f"{sn.get('label', '?')} ({self._loc(s)}) --{rel}-->")
         for t, rel in self.out_edges.get(best, []):
             tn = self.id2node.get(t, {})
-            if self._skipped(tn.get("source_file", "")):
+            if rel in STRUCTURAL_RELATIONS or self._skipped(tn.get("source_file", "")):
                 continue
             callees.append(f"--{rel}--> {tn.get('label', '?')} ({self._loc(t)})")
         result = {

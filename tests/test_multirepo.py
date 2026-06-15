@@ -391,7 +391,7 @@ class TestRunExtract:
         svc = ServiceInfo("my-svc", str(tmp_path / "my-svc"), str(tmp_path / "my-svc" / "graphify-out" / "graph.json"))
         mock_proc = make_mock_proc(returncode=0)
         with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            run_extract(svc, "/usr/bin/graphify", "claude")
+            run_extract(svc, "/usr/bin/graphify", "claude", env={"ANTHROPIC_API_KEY": "sk-test"})
         args = mock_popen.call_args[0][0]
         assert args[0] == "/usr/bin/graphify"
         assert args[1] == "extract"
@@ -404,10 +404,27 @@ class TestRunExtract:
         svc = ServiceInfo("svc", str(tmp_path), str(tmp_path / "graphify-out" / "graph.json"))
         mock_proc = make_mock_proc(0)
         with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            run_extract(svc, "/graphify", "openai")
+            run_extract(svc, "/graphify", "openai", env={"OPENAI_API_KEY": "sk-test"})
         args = mock_popen.call_args[0][0]
         idx = args.index("--backend")
         assert args[idx + 1] == "openai"
+
+    def test_falls_back_to_update_without_key(self, tmp_path):
+        svc = ServiceInfo("svc", str(tmp_path), str(tmp_path / "graphify-out" / "graph.json"))
+        mock_proc = make_mock_proc(0)
+        with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            run_extract(svc, "/graphify", "claude", env={})
+        args = mock_popen.call_args[0][0]
+        assert args == ["/graphify", "update", svc.abs_path]
+        assert "--backend" not in args
+
+    def test_openai_key_selects_extract(self, tmp_path):
+        svc = ServiceInfo("svc", str(tmp_path), str(tmp_path / "graphify-out" / "graph.json"))
+        mock_proc = make_mock_proc(0)
+        with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            run_extract(svc, "/graphify", "openai", env={"OPENAI_KEY": "sk-test"})
+        args = mock_popen.call_args[0][0]
+        assert args[1] == "extract"
 
     def test_returns_exit_code(self, tmp_path):
         svc = ServiceInfo("svc", str(tmp_path), str(tmp_path / "graphify-out" / "graph.json"))
@@ -423,7 +440,7 @@ class TestBuildOverarchingGraph:
     def test_extracts_root_path(self, tmp_path):
         mock_proc = make_mock_proc(0)
         with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            build_overarching_graph(str(tmp_path), "/graphify", "claude")
+            build_overarching_graph(str(tmp_path), "/graphify", "claude", env={"ANTHROPIC_API_KEY": "sk-test"})
         args = mock_popen.call_args[0][0]
         assert args[:2] == ["/graphify", "extract"]
         assert str(tmp_path) in args

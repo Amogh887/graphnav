@@ -4,6 +4,19 @@ All notable changes to GraphNav are documented here. Versions follow [Semantic V
 
 ---
 
+## [1.4.0] — 2026-06-15
+
+### Added
+- **Zero-key setup.** `graphnav map`/`watch` now build a free AST-only graph when no API key is present — symbols, call edges, and cross-service bridges all work with no key and no cost. Previously the first command failed hard with `error: backend 'claude' requires ANTHROPIC_API_KEY`. When a key *is* found (Anthropic, OpenAI, Gemini, or DeepSeek), the richer semantic `graphify extract --backend …` path is used automatically. Key detection is backend-agnostic, so an `OPENAI_API_KEY` is honored just like an Anthropic key.
+
+### Fixed
+- **Automatic background rebuilds no longer loop forever without a key.** Because rebuilds shell out to `map`, a key-less repo previously failed every rebuild silently while every query kept announcing "rebuild started" — the graph never refreshed. With the free build path the background rebuild now succeeds and the graph actually goes fresh.
+- **`graphnav neighbors`/`impact` no longer list a symbol's own defining file as a "caller."** Structural `contains` edges (file → symbol) are filtered out, so callers/callees reflect real call and import relationships.
+- **Unknown `graphify_backend` values are validated.** A typo like `"claud"` now warns and falls back to `claude` (known: `claude`, `openai`, `gemini`, `deepseek`, `ollama`) instead of surfacing a cryptic subprocess error.
+- `graphnav doctor` now reports a missing API key as `ok` (free AST-only build available) rather than a warning.
+
+---
+
 ## [1.3.0] — 2026-06-12
 
 ### Added

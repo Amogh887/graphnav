@@ -45,7 +45,7 @@ Then open the repo in your AI coding tool and start working. **There is nothing 
 
 Requires Python ≥ 3.11. Pulls `graphifyy` (the `graphify` binary) automatically — including under `pipx`, `--user`, and virtualenv installs.
 
-**API key:** Place a `.env` file anywhere up the directory tree from your project (or inside any service subfolder). graphnav walks up and down to find it:
+**API key (optional):** With no key, `graphnav` builds a free AST-only graph — symbols, call edges, and cross-service bridges all work out of the box. Add a key only if you want richer semantic links: place a `.env` file anywhere up the directory tree from your project (or inside any service subfolder), and graphnav walks up and down to find it. Any backend's key works — Anthropic, OpenAI, Gemini, or DeepSeek:
 
 ```
 OPENAI_API_KEY=sk-...
@@ -352,7 +352,7 @@ Every team member runs one command after cloning:
 pip install graphnav
 ```
 
-Drop a `.env` with your API key anywhere in or above the repo:
+Optionally drop a `.env` with any backend's API key anywhere in or above the repo for richer semantic links (without one, a free AST-only graph is built):
 
 ```
 ANTHROPIC_KEY=sk-ant-...
@@ -373,7 +373,7 @@ The generated `CLAUDE.md`, `AGENTS.md`, and `.github/copilot-instructions.md` ca
 
 - Python ≥ 3.11
 - `graphifyy` ≥ 0.8 (installed automatically)
-- An API key for your chosen LLM backend (only needed for `map` / `watch`; `context` is free)
+- No API key required — `map`/`watch` build a free AST-only graph by default. A key for your chosen LLM backend (Anthropic, OpenAI, Gemini, or DeepSeek) is optional and only enriches semantic links; `context` and all queries are always free.
 
 ---
 

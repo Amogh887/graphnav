@@ -165,10 +165,10 @@ class TestLoadConfig:
         assert cfg.mono.graphify_backend == "deepseek"
 
     def test_cwd_config_toml_loaded(self, tmp_path, monkeypatch):
-        (tmp_path / "config.toml").write_text('[mono]\ngraphify_backend = "kimi"\n')
+        (tmp_path / "config.toml").write_text('[mono]\ngraphify_backend = "openai"\n')
         monkeypatch.chdir(tmp_path)
         cfg = load_config()
-        assert cfg.mono.graphify_backend == "kimi"
+        assert cfg.mono.graphify_backend == "openai"
 
     def test_marker_files_override_from_toml(self, tmp_path):
         config_file = tmp_path / "config.toml"
@@ -189,6 +189,19 @@ class TestConfigValidation:
         config_file.write_text("[query]\nbm25_k1 = 0.0\n")
         cfg = load_config(str(config_file))
         assert cfg.query.bm25_k1 == 1.5
+
+    def test_unknown_backend_falls_back_to_default(self, tmp_path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text('[mono]\ngraphify_backend = "kimi"\n')
+        cfg, _, warnings = load_config_report(str(config_file))
+        assert cfg.mono.graphify_backend == "claude"
+        assert any("graphify_backend" in w and "kimi" in w for w in warnings)
+
+    def test_known_backend_preserved(self, tmp_path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text('[mono]\ngraphify_backend = "ollama"\n')
+        cfg = load_config(str(config_file))
+        assert cfg.mono.graphify_backend == "ollama"
 
     def test_bm25_b_clamped_into_unit_interval(self, tmp_path):
         config_file = tmp_path / "config.toml"

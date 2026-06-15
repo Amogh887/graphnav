@@ -5,7 +5,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 
-from codex_graph.config import Config, load_config_report
+from codex_graph.config import BACKEND_KEY_VARS, Config, load_config_report
 from codex_graph.graph_cache import cache_path_for, load_bundle
 from codex_graph.multirepo import (
     _graph_meta_path,
@@ -15,14 +15,6 @@ from codex_graph.multirepo import (
     resolve_services,
     staleness_note,
 )
-
-BACKEND_KEY_VARS = {
-    "claude": ("ANTHROPIC_API_KEY", "ANTHROPIC_KEY"),
-    "openai": ("OPENAI_API_KEY",),
-    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-    "deepseek": ("DEEPSEEK_API_KEY",),
-    "ollama": (),
-}
 
 MAX_SERVICE_NAMES_SHOWN = 5
 
@@ -100,7 +92,7 @@ def _check_api_key(root: str, cfg: Config) -> CheckResult:
         if env_vars.get(var):
             return CheckResult("ok", "API key", f"found in .env (${var})")
     expected = " or ".join(key_vars)
-    return CheckResult("warn", "API key", f"not found — set {expected} (only needed for map/watch)")
+    return CheckResult("ok", "API key", f"none set — map/watch build a free AST-only graph (set {expected} for richer semantic links)")
 
 
 def _check_services(root: str, cfg: Config) -> CheckResult:

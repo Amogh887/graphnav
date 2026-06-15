@@ -11,7 +11,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from codex_graph.config import MonoConfig, QueryConfig
+from codex_graph.config import (
+    BACKEND_KEY_VARS,
+    MonoConfig,
+    QueryConfig,
+    backend_has_key,
+)
 
 
 def find_graphify() -> str | None:
@@ -296,9 +301,19 @@ def run_extract(
     timeout: int = 600,
     env: dict[str, str] | None = None,
 ) -> int:
+    resolved_env = env if env is not None else dict(os.environ)
+    if backend_has_key(backend, resolved_env):
+        cmd = [graphify_path, "extract", service.abs_path, "--backend", backend, "--out", service.abs_path]
+    else:
+        print(
+            f"[graphnav] no API key for backend '{backend}' — building a free AST-only graph "
+            f"(set a {backend} API key for richer semantic links).",
+            file=sys.stderr,
+        )
+        cmd = [graphify_path, "update", service.abs_path]
     print(f"[graphnav] extracting {service.name} ...", file=sys.stderr)
     proc = subprocess.Popen(
-        [graphify_path, "extract", service.abs_path, "--backend", backend, "--out", service.abs_path],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -1028,7 +1043,11 @@ def run_map(
     rc = build_overarching_graph(root, graphify_path, backend, env=env)
     if rc != 0 or not os.path.exists(overarching_path):
         print(f"Error: graphify extraction failed (exit {rc}).", file=sys.stderr)
-        print("  Ensure an API key is available (e.g. ANTHROPIC_API_KEY or ANTHROPIC_KEY in a .env file).", file=sys.stderr)
+        if backend_has_key(backend, env):
+            key_hint = " or ".join(BACKEND_KEY_VARS.get(backend, ())) or "the backend's API key"
+            print(f"  Check your '{backend}' backend ({key_hint}) or re-run; graphify may be misconfigured.", file=sys.stderr)
+        else:
+            print("  The free AST-only build failed — re-run, or delete graphify-out/ and try again.", file=sys.stderr)
         return 1
 
     try:

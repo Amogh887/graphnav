@@ -90,6 +90,34 @@ class TestNeighborsFuzzy:
         assert nav.neighbors("zzqqxx") == {"symbol": "zzqqxx", "found": False}
 
 
+class TestNeighborsStructuralEdges:
+    def _nav(self):
+        nodes = [
+            {"id": "views.py", "label": "views.py", "source_file": "api/views.py",
+             "file_type": "code", "source_location": "L1"},
+            {"id": "create_incident", "label": "create_incident", "source_file": "api/views.py",
+             "file_type": "code", "source_location": "L2"},
+            {"id": "handle_request", "label": "handle_request", "source_file": "api/routes.py",
+             "file_type": "code", "source_location": "L4"},
+        ]
+        links = [
+            {"source": "views.py", "target": "create_incident", "relation": "contains",
+             "source_file": "api/views.py"},
+            {"source": "handle_request", "target": "create_incident", "relation": "calls",
+             "source_file": "api/routes.py"},
+        ]
+        return GraphNav("", graph=make_graph_dict(nodes, links))
+
+    def test_contains_edge_excluded_from_callers(self):
+        out = self._nav().neighbors("create_incident")
+        assert not any("contains" in c for c in out["callers"])
+        assert not any("views.py" in c for c in out["callers"])
+
+    def test_real_caller_still_present(self):
+        out = self._nav().neighbors("create_incident")
+        assert any("handle_request" in c and "calls" in c for c in out["callers"])
+
+
 class TestReferencesTo:
     def test_cross_file_caller_appears(self, nav):
         rows = nav.references_to(["api/limits.py"])

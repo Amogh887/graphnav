@@ -126,10 +126,11 @@ class TestDoctorApiKey:
         out = capsys.readouterr().out
         assert "found in .env" in out
 
-    def test_no_key_warns(self, healthy_repo, fake_graphify, capsys):
+    def test_no_key_reports_free_fallback(self, healthy_repo, fake_graphify, capsys):
         rc = run_doctor(str(healthy_repo))
         out = capsys.readouterr().out
-        assert "[warn] API key" in out
+        assert "[ok] API key" in out
+        assert "free AST-only graph" in out
         assert rc == 0
 
     def test_ollama_needs_no_key(self, tmp_path, fake_graphify, monkeypatch, capsys):

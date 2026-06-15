@@ -5,6 +5,25 @@ import sys
 import tomllib
 from dataclasses import dataclass, field, fields
 
+DEFAULT_BACKEND = "claude"
+
+BACKEND_KEY_VARS = {
+    "claude": ("ANTHROPIC_API_KEY", "ANTHROPIC_KEY"),
+    "openai": ("OPENAI_API_KEY", "OPENAI_KEY"),
+    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_KEY"),
+    "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_KEY"),
+    "ollama": (),
+}
+
+KNOWN_BACKENDS = frozenset(BACKEND_KEY_VARS)
+
+
+def backend_has_key(backend: str, env: dict[str, str]) -> bool:
+    key_vars = BACKEND_KEY_VARS.get(backend, ())
+    if not key_vars:
+        return True
+    return any((env.get(var) or "").strip() for var in key_vars)
+
 
 @dataclass
 class GraphConfig:
@@ -177,6 +196,13 @@ def _coerce_types(cfg: Config, warnings: list[str]) -> None:
             fallback = getattr(getattr(Config(), section), key)
             warnings.append(f"{section}.{key} must be a list of strings — using default")
             setattr(getattr(cfg, section), key, fallback)
+    backend = cfg.mono.graphify_backend
+    if not isinstance(backend, str) or backend not in KNOWN_BACKENDS:
+        warnings.append(
+            f"mono.graphify_backend has unknown value {backend!r} — "
+            f"using default {DEFAULT_BACKEND!r} (known: {', '.join(sorted(KNOWN_BACKENDS))})"
+        )
+        cfg.mono.graphify_backend = DEFAULT_BACKEND
 
 
 def _validate(cfg: Config) -> list[str]:
