@@ -4,6 +4,13 @@ All notable changes to GraphNav are documented here. Versions follow [Semantic V
 
 ---
 
+## [1.4.1] — 2026-06-16
+
+### Fixed
+- **Keyless rebuilds now actually refresh the graph.** `graphify update` (the no-key build path added in 1.4.0) silently skips with "outputs left untouched" whenever a `graph.json` already exists, so after the first build a key-less repo's auto-rebuild never picked up code changes and staleness never cleared. The keyless path now removes the stale `graph.json` before rebuilding (the `cache/` is kept, so rebuilds stay fast); the keyed `extract` path is unchanged.
+
+---
+
 ## [1.4.0] — 2026-06-15
 
 ### Added

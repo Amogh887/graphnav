@@ -418,6 +418,40 @@ class TestRunExtract:
         assert args == ["/graphify", "update", svc.abs_path]
         assert "--backend" not in args
 
+    def test_keyless_removes_stale_graph_before_update(self, tmp_path):
+        graph_path = tmp_path / "graphify-out" / "graph.json"
+        graph_path.parent.mkdir(parents=True)
+        graph_path.write_text('{"nodes": [1, 2, 3]}')
+        svc = ServiceInfo("svc", str(tmp_path), str(graph_path))
+        mock_proc = make_mock_proc(0)
+        with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc):
+            run_extract(svc, "/graphify", "claude", env={})
+        assert not graph_path.exists()
+
+    def test_keyed_extract_keeps_existing_graph(self, tmp_path):
+        graph_path = tmp_path / "graphify-out" / "graph.json"
+        graph_path.parent.mkdir(parents=True)
+        graph_path.write_text('{"nodes": []}')
+        svc = ServiceInfo("svc", str(tmp_path), str(graph_path))
+        mock_proc = make_mock_proc(0)
+        with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc):
+            run_extract(svc, "/graphify", "claude", env={"ANTHROPIC_API_KEY": "sk-test"})
+        assert graph_path.exists()
+
+    def test_env_none_uses_os_environ_for_key_decision(self, tmp_path, monkeypatch):
+        svc = ServiceInfo("svc", str(tmp_path), str(tmp_path / "graphify-out" / "graph.json"))
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_KEY", raising=False)
+        mock_proc = make_mock_proc(0)
+        with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            run_extract(svc, "/graphify", "claude")
+        assert mock_popen.call_args[0][0][1] == "update"
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            run_extract(svc, "/graphify", "claude")
+        assert mock_popen.call_args[0][0][1] == "extract"
+
     def test_openai_key_selects_extract(self, tmp_path):
         svc = ServiceInfo("svc", str(tmp_path), str(tmp_path / "graphify-out" / "graph.json"))
         mock_proc = make_mock_proc(0)
@@ -432,6 +466,31 @@ class TestRunExtract:
         with patch("codex_graph.multirepo.subprocess.Popen", return_value=mock_proc):
             rc = run_extract(svc, "/graphify", "claude")
         assert rc == 1
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("graphify") is None,
+    reason="graphify binary not installed",
+)
+class TestKeylessRebuildIntegration:
+    def test_keyless_rebuild_picks_up_code_deletion(self, tmp_path):
+        import shutil as _shutil
+
+        graphify = _shutil.which("graphify")
+        (tmp_path / "pyproject.toml").write_text('[project]\nname="x"\nversion="0"\n')
+        (tmp_path / "m.py").write_text(
+            "def a():\n    return 1\ndef b():\n    return a()\ndef c():\n    return b()\n"
+        )
+        graph_path = tmp_path / "graphify-out" / "graph.json"
+        svc = ServiceInfo("x", str(tmp_path), str(graph_path))
+
+        assert run_extract(svc, graphify, "claude", env={}) == 0
+        before = len(json.loads(graph_path.read_text())["nodes"])
+
+        (tmp_path / "m.py").write_text("def a():\n    return 1\n")
+        assert run_extract(svc, graphify, "claude", env={}) == 0
+        after = len(json.loads(graph_path.read_text())["nodes"])
+        assert after < before
 
 
 # ── build_overarching_graph ──────────────────────────────────────────────────
@@ -1123,6 +1182,23 @@ class TestRunMap:
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
         monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", lambda *a, **kw: 1)
         assert run_map(str(two_svc_root), MonoConfig()) == 1
+
+    def test_failure_with_key_prints_backend_hint(self, two_svc_root, monkeypatch, capsys):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", lambda *a, **kw: 1)
+        monkeypatch.setattr("codex_graph.multirepo.backend_has_key", lambda *a, **kw: True)
+        run_map(str(two_svc_root), MonoConfig())
+        err = capsys.readouterr().err
+        assert "ANTHROPIC_API_KEY" in err
+        assert "free AST-only build failed" not in err
+
+    def test_failure_without_key_prints_free_hint(self, two_svc_root, monkeypatch, capsys):
+        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        monkeypatch.setattr("codex_graph.multirepo.build_overarching_graph", lambda *a, **kw: 1)
+        monkeypatch.setattr("codex_graph.multirepo.backend_has_key", lambda *a, **kw: False)
+        run_map(str(two_svc_root), MonoConfig())
+        err = capsys.readouterr().err
+        assert "free AST-only build failed" in err
 
     def test_overarching_missing_file_returns_1(self, two_svc_root, monkeypatch):
         monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")

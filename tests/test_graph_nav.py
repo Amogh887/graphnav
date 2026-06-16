@@ -117,6 +117,20 @@ class TestNeighborsStructuralEdges:
         out = self._nav().neighbors("create_incident")
         assert any("handle_request" in c and "calls" in c for c in out["callers"])
 
+    def test_non_structural_edges_not_overfiltered(self):
+        nodes = [
+            {"id": "create_incident", "label": "create_incident", "source_file": "api/views.py",
+             "file_type": "code", "source_location": "L2"},
+            {"id": "app.py", "label": "app.py", "source_file": "app.py",
+             "file_type": "code", "source_location": "L1"},
+        ]
+        links = [
+            {"source": "app.py", "target": "create_incident", "relation": "imports",
+             "source_file": "app.py"},
+        ]
+        out = GraphNav("", graph=make_graph_dict(nodes, links)).neighbors("create_incident")
+        assert any("imports" in c and "app.py" in c for c in out["callers"])
+
 
 class TestReferencesTo:
     def test_cross_file_caller_appears(self, nav):

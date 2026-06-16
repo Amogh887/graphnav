@@ -12,9 +12,30 @@ from codex_graph.config import (
     MonoConfig,
     QueryConfig,
     _apply_toml,
+    backend_has_key,
     load_config,
     load_config_report,
 )
+
+
+class TestBackendHasKey:
+    def test_keyless_backend_always_true(self):
+        assert backend_has_key("ollama", {}) is True
+
+    def test_unknown_backend_treated_as_keyless(self):
+        assert backend_has_key("mystery", {}) is True
+
+    def test_missing_key_is_false(self):
+        assert backend_has_key("claude", {}) is False
+
+    def test_present_key_is_true(self):
+        assert backend_has_key("claude", {"ANTHROPIC_API_KEY": "sk-test"}) is True
+
+    def test_alias_var_counts(self):
+        assert backend_has_key("claude", {"ANTHROPIC_KEY": "sk-test"}) is True
+
+    def test_whitespace_only_value_is_false(self):
+        assert backend_has_key("claude", {"ANTHROPIC_API_KEY": "   "}) is False
 
 
 class TestMonoConfigDefaults:

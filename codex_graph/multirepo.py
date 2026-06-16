@@ -310,6 +310,10 @@ def run_extract(
             f"(set a {backend} API key for richer semantic links).",
             file=sys.stderr,
         )
+        try:
+            os.remove(service.graph_path)
+        except OSError:
+            pass
         cmd = [graphify_path, "update", service.abs_path]
     print(f"[graphnav] extracting {service.name} ...", file=sys.stderr)
     proc = subprocess.Popen(
