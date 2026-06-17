@@ -14,25 +14,25 @@ class TestMonoSubcommandDispatch:
         monkeypatch.setattr(sys, "argv", ["codex-graph", "map", "--root", str(tmp_path), "--dry-run"])
         calls = []
         monkeypatch.setattr(
-            "codex_graph.multirepo.shutil.which", lambda _: "/graphify"
+            "graphnav.multirepo.shutil.which", lambda _: "/graphify"
         )
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code in (0, 1)
 
     def test_watch_dispatched_to_run_watch(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(sys, "argv", ["codex-graph", "watch", "--root", str(tmp_path)])
-        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: None)
+        monkeypatch.setattr("graphnav.multirepo.shutil.which", lambda _: None)
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 1
 
     def test_map_help_exits_0(self, monkeypatch, capsys):
         monkeypatch.setattr(sys, "argv", ["codex-graph", "map", "--help"])
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 0
         out = capsys.readouterr().out
@@ -41,7 +41,7 @@ class TestMonoSubcommandDispatch:
     def test_watch_help_exits_0(self, monkeypatch, capsys):
         monkeypatch.setattr(sys, "argv", ["codex-graph", "watch", "--help"])
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 0
 
@@ -51,9 +51,9 @@ class TestMonoSubcommandDispatch:
         (tmp_path / "svc-b").mkdir()
         (tmp_path / "svc-b" / "package.json").touch()
         monkeypatch.setattr(sys, "argv", ["codex-graph", "map", "--root", str(tmp_path), "--dry-run"])
-        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        monkeypatch.setattr("graphnav.multirepo.shutil.which", lambda _: "/graphify")
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 0
         out = capsys.readouterr().out
@@ -62,9 +62,9 @@ class TestMonoSubcommandDispatch:
 
     def test_backend_flag_forwarded(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["codex-graph", "map", "--root", str(tmp_path), "--backend", "openai", "--dry-run"])
-        monkeypatch.setattr("codex_graph.multirepo.shutil.which", lambda _: "/graphify")
+        monkeypatch.setattr("graphnav.multirepo.shutil.which", lambda _: "/graphify")
         with pytest.raises(SystemExit):
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
 
 
@@ -77,10 +77,10 @@ class TestContextCommand:
             captured["root"] = root
             return "# Context for: " + task
 
-        monkeypatch.setattr("codex_graph.multirepo.build_context_pack_inline", fake_pack)
+        monkeypatch.setattr("graphnav.multirepo.build_context_pack_inline", fake_pack)
         monkeypatch.setattr(sys, "argv", ["codex-graph", "context", "fix the login bug", "--root", str(tmp_path)])
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 0
         assert captured["task"] == "fix the login bug"
@@ -89,34 +89,34 @@ class TestContextCommand:
     def test_context_defaults_to_inline(self, tmp_path, monkeypatch):
         used = {"inline": False, "locations": False}
         monkeypatch.setattr(
-            "codex_graph.multirepo.build_context_pack_inline",
+            "graphnav.multirepo.build_context_pack_inline",
             lambda **kw: used.__setitem__("inline", True) or "",
         )
         monkeypatch.setattr(
-            "codex_graph.multirepo.build_context_pack",
+            "graphnav.multirepo.build_context_pack",
             lambda **kw: used.__setitem__("locations", True) or "",
         )
         monkeypatch.setattr(sys, "argv", ["codex-graph", "context", "task", "--root", str(tmp_path)])
         with pytest.raises(SystemExit):
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert used["inline"] and not used["locations"]
 
     def test_context_locations_only_uses_index_pack(self, tmp_path, monkeypatch):
         used = {"inline": False, "locations": False}
         monkeypatch.setattr(
-            "codex_graph.multirepo.build_context_pack_inline",
+            "graphnav.multirepo.build_context_pack_inline",
             lambda **kw: used.__setitem__("inline", True) or "",
         )
         monkeypatch.setattr(
-            "codex_graph.multirepo.build_context_pack",
+            "graphnav.multirepo.build_context_pack",
             lambda **kw: used.__setitem__("locations", True) or "",
         )
         monkeypatch.setattr(sys, "argv", [
             "codex-graph", "context", "task", "--root", str(tmp_path), "--locations-only"
         ])
         with pytest.raises(SystemExit):
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert used["locations"] and not used["inline"]
 
@@ -128,12 +128,12 @@ class TestContextCommand:
             captured["budget_tokens"] = budget_tokens
             return ""
 
-        monkeypatch.setattr("codex_graph.multirepo.build_context_pack_inline", fake_pack)
+        monkeypatch.setattr("graphnav.multirepo.build_context_pack_inline", fake_pack)
         monkeypatch.setattr(sys, "argv", [
             "codex-graph", "context", "task", "--root", str(tmp_path), "--budget", "500", "--files", "3"
         ])
         with pytest.raises(SystemExit):
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert captured["budget_tokens"] == 500
         assert captured["top_files"] == 3
@@ -142,7 +142,7 @@ class TestContextCommand:
         monkeypatch.setattr(sys, "argv", ["codex-graph", "context", "--root", str(tmp_path)])
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 1
 
@@ -163,9 +163,9 @@ class TestAutoMap:
             called_with["root"] = root
             return 0
 
-        monkeypatch.setattr("codex_graph.multirepo.run_map", fake_run_map)
+        monkeypatch.setattr("graphnav.multirepo.run_map", fake_run_map)
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 0
         assert str(tmp_path) == called_with["root"]
@@ -175,7 +175,7 @@ class TestAutoMap:
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 1
         err = capsys.readouterr().err
@@ -193,9 +193,9 @@ class TestAutoMap:
             called["root"] = root
             return 0
 
-        monkeypatch.setattr("codex_graph.multirepo.run_map", fake_run_map)
+        monkeypatch.setattr("graphnav.multirepo.run_map", fake_run_map)
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 0
         assert called["root"] == str(tmp_path)
@@ -218,7 +218,7 @@ class TestExistingPromptPathUnaffected:
         ])
         monkeypatch.chdir(tmp_path)
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 0
         out = capsys.readouterr().out
@@ -239,7 +239,7 @@ class TestExistingPromptPathUnaffected:
         ])
         monkeypatch.chdir(tmp_path)
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 0
 
@@ -249,7 +249,7 @@ class TestExistingPromptPathUnaffected:
         ])
         monkeypatch.chdir(tmp_path)
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 2
 
@@ -258,9 +258,9 @@ class TestIndexCacheUsed:
     def test_second_find_run_skips_index_build(self, tmp_path, monkeypatch, capsys):
         import os
 
-        from codex_graph.cli import main
-        from codex_graph.graph_cache import cache_path_for, clear_memo
-        from codex_graph.graph_query import GraphIndex
+        from graphnav.cli import main
+        from graphnav.graph_cache import cache_path_for, clear_memo
+        from graphnav.graph_query import GraphIndex
         from tests.conftest import write_graph
 
         graph_path = tmp_path / "graphify-out" / "graph.json"
@@ -292,12 +292,12 @@ class TestIndexCacheUsed:
 
 class TestDoctorDispatch:
     def test_doctor_empty_root_fails(self, tmp_path, monkeypatch, capsys):
-        from codex_graph import doctor
+        from graphnav import doctor
 
         monkeypatch.setattr(doctor, "find_graphify", lambda: None)
         monkeypatch.setattr(sys, "argv", ["graphnav", "doctor", "--root", str(tmp_path)])
         with pytest.raises(SystemExit) as exc:
-            from codex_graph.cli import main
+            from graphnav.cli import main
             main()
         assert exc.value.code == 1
         assert "[fail]" in capsys.readouterr().out

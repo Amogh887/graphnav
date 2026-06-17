@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from codex_graph.multirepo import ServiceInfo
+from graphnav.multirepo import ServiceInfo
 
 
 def make_graph_dict(nodes=None, links=None) -> dict:

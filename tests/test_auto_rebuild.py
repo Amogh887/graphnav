@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codex_graph import multirepo
-from codex_graph.config import load_config_report
-from codex_graph.multirepo import graph_is_stale, maybe_auto_rebuild
+from graphnav import multirepo
+from graphnav.config import load_config_report
+from graphnav.multirepo import graph_is_stale, maybe_auto_rebuild
 from tests.conftest import write_graph
 
 
@@ -24,7 +24,7 @@ def fake_popen(monkeypatch):
     popen = MagicMock(return_value=proc)
     monkeypatch.setattr(multirepo.subprocess, "Popen", popen)
     monkeypatch.setattr(multirepo, "_git_sha", lambda root: None)
-    monkeypatch.setattr("codex_graph.graph_cache._git_recency", lambda root: {})
+    monkeypatch.setattr("graphnav.graph_cache._git_recency", lambda root: {})
     return popen
 
 

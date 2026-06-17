@@ -4,11 +4,11 @@ import json
 import os
 import sys
 
-from codex_graph import GraphNotFoundError
-from codex_graph.config import QueryConfig, load_config
-from codex_graph.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
-from codex_graph.graph_nav import GraphNav
-from codex_graph.multirepo import (
+from graphnav import GraphNotFoundError
+from graphnav.config import QueryConfig, load_config
+from graphnav.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
+from graphnav.graph_nav import GraphNav
+from graphnav.multirepo import (
     _overarching_graph_path,
     build_context_pack_inline,
     maybe_auto_rebuild,

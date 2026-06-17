@@ -4,14 +4,14 @@ import argparse
 import os
 import sys
 
-from codex_graph import CodexNotFoundError, CodexTimeoutError, GraphNotFoundError
-from codex_graph.config import load_config
-from codex_graph.graph_query import query_files
-from codex_graph import runner
+from graphnav import CodexNotFoundError, CodexTimeoutError, GraphNotFoundError
+from graphnav.config import load_config
+from graphnav.graph_query import query_files
+from graphnav import runner
 
 
 def _run_mono_command(cmd: str, argv: list[str]) -> None:
-    from codex_graph import multirepo
+    from graphnav import multirepo
 
     parser = argparse.ArgumentParser(
         prog=f"graphnav {cmd}",
@@ -23,6 +23,8 @@ def _run_mono_command(cmd: str, argv: list[str]) -> None:
     parser.add_argument("--root", default=".", metavar="PATH", help="Monorepo root directory (default: current directory)")
     parser.add_argument("--backend", default=None, metavar="BACKEND", help="graphify LLM backend (claude|openai|gemini|deepseek|ollama)")
     parser.add_argument("--config", default=None, metavar="PATH", help="Path to config.toml")
+    parser.add_argument("--semantic", action="store_true", help="Opt into LLM extraction (sends your source to the backend provider; may incur cost). Default is a free local AST-only build.")
+    parser.add_argument("--offline", action="store_true", help="Force the free local AST-only build even if an API key is present")
     if cmd == "map":
         parser.add_argument("--dry-run", action="store_true", help="Detect services and print the plan without invoking graphify")
 
@@ -35,19 +37,23 @@ def _run_mono_command(cmd: str, argv: list[str]) -> None:
             mono_cfg=cfg.mono,
             backend_override=args.backend,
             dry_run=args.dry_run,
+            semantic=args.semantic,
+            offline=args.offline,
         )
     else:
         rc = multirepo.run_watch(
             root=args.root,
             mono_cfg=cfg.mono,
             backend_override=args.backend,
+            semantic=args.semantic,
+            offline=args.offline,
         )
     sys.exit(rc)
 
 
 def _auto_map_if_needed(cfg_path: str | None) -> None:
-    from codex_graph import multirepo
-    from codex_graph.config import load_config
+    from graphnav import multirepo
+    from graphnav.config import load_config
 
     cfg = load_config(cfg_path)
     root = os.path.abspath(".")
@@ -66,7 +72,7 @@ def _auto_map_if_needed(cfg_path: str | None) -> None:
 
 
 def _run_context_command(argv: list[str]) -> None:
-    from codex_graph import multirepo
+    from graphnav import multirepo
 
     parser = argparse.ArgumentParser(
         prog="graphnav context",
@@ -116,8 +122,8 @@ def _run_context_command(argv: list[str]) -> None:
 
 
 def _run_graph_query_command(kind: str, argv: list[str]) -> None:
-    from codex_graph import multirepo
-    from codex_graph.graph_cache import load_bundle
+    from graphnav import multirepo
+    from graphnav.graph_cache import load_bundle
 
     parser = argparse.ArgumentParser(prog=f"graphnav {kind}")
     parser.add_argument("term", nargs="?", help="query (find) or symbol (neighbors)")
@@ -137,7 +143,7 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
         sys.exit(2)
 
     if kind == "impact":
-        from codex_graph.mcp_server import GraphTools
+        from graphnav.mcp_server import GraphTools
 
         tools = GraphTools(root, cfg.graph.skip_patterns, query_cfg=cfg.query, auto_rebuild=False)
         print(tools.impact(args.term))
@@ -183,7 +189,7 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
 
 
 def _run_doctor_command(argv: list[str]) -> None:
-    from codex_graph.doctor import run_doctor
+    from graphnav.doctor import run_doctor
 
     parser = argparse.ArgumentParser(
         prog="graphnav doctor",
@@ -196,7 +202,7 @@ def _run_doctor_command(argv: list[str]) -> None:
 
 
 def _run_serve_command(argv: list[str]) -> None:
-    from codex_graph import mcp_server
+    from graphnav import mcp_server
 
     parser = argparse.ArgumentParser(
         prog="graphnav serve",
@@ -282,7 +288,7 @@ def main() -> None:
     if args.no_context:
         ranked = []
     else:
-        from codex_graph.graph_cache import load_bundle
+        from graphnav.graph_cache import load_bundle
 
         try:
             bundle = load_bundle(

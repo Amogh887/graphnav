@@ -5,9 +5,9 @@ import sys
 
 import pytest
 
-from codex_graph.config import load_config_report
-from codex_graph.graph_nav import GraphNav
-from codex_graph.multirepo import (
+from graphnav.config import load_config_report
+from graphnav.graph_nav import GraphNav
+from graphnav.multirepo import (
     _load_env_file,
     _parse_env_file,
     build_context_pack_inline,
@@ -142,7 +142,7 @@ class TestEnvFileParsing:
 
 class TestDoctorFlatRepo:
     def test_flat_repo_services_check_passes(self, tmp_path, monkeypatch, capsys):
-        from codex_graph import doctor
+        from graphnav import doctor
 
         (tmp_path / "app.py").write_text("def main():\n    pass\n")
         write_graph(
@@ -173,7 +173,7 @@ class TestCorruptGraphCli:
         monkeypatch.setattr(
             sys, "argv", ["graphnav", "find", "anything", "--root", str(tmp_path)]
         )
-        from codex_graph.cli import main
+        from graphnav.cli import main
 
         with pytest.raises(SystemExit) as exc:
             main()

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from codex_graph.graph_nav import GraphNav
+from graphnav.graph_nav import GraphNav
 from tests.conftest import make_graph_dict, write_graph
 
 

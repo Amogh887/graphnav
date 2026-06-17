@@ -5,9 +5,15 @@ import os
 import subprocess
 from dataclasses import dataclass
 
-from codex_graph.config import BACKEND_KEY_VARS, Config, load_config_report
-from codex_graph.graph_cache import cache_path_for, load_bundle
-from codex_graph.multirepo import (
+from graphnav.config import (
+    BACKEND_KEY_VARS,
+    Config,
+    backend_has_key,
+    backend_provider,
+    load_config_report,
+)
+from graphnav.graph_cache import cache_path_for, load_bundle
+from graphnav.multirepo import (
     _graph_meta_path,
     _load_env_file,
     _overarching_graph_path,
@@ -52,7 +58,7 @@ def _check_config(config_path: str | None) -> tuple[Config, CheckResult]:
 def _check_graph(root: str) -> tuple[CheckResult, bool]:
     path = _overarching_graph_path(root)
     if not os.path.exists(path):
-        return CheckResult("fail", "graph.json", "missing — run `graphnav map`"), False
+        return CheckResult("warn", "graph.json", "not built yet — run `graphnav map` (free, local)"), False
     try:
         with open(path) as f:
             graph = json.load(f)
@@ -95,6 +101,27 @@ def _check_api_key(root: str, cfg: Config) -> CheckResult:
     return CheckResult("ok", "API key", f"none set — map/watch build a free AST-only graph (set {expected} for richer semantic links)")
 
 
+def _check_mode(root: str, cfg: Config) -> CheckResult:
+    backend = cfg.mono.graphify_backend
+    env = dict(os.environ)
+    env.update(_load_env_file(root))
+    has_key = backend_has_key(backend, env)
+    if cfg.mono.semantic and has_key:
+        return CheckResult(
+            "ok", "mode",
+            f"semantic — `graphnav map` sends code to {backend_provider(backend)}'s API (may incur cost)",
+        )
+    if cfg.mono.semantic and not has_key:
+        return CheckResult(
+            "warn", "mode",
+            f"semantic requested but no '{backend}' key — `graphnav map` builds a free local AST-only graph",
+        )
+    detail = "local — `graphnav map` builds an AST-only graph (no network, no LLM, no cost)"
+    if has_key:
+        detail += "; add --semantic for richer LLM links"
+    return CheckResult("ok", "mode", detail)
+
+
 def _check_services(root: str, cfg: Config) -> CheckResult:
     services, single = resolve_services(root, cfg.mono.marker_files, cfg.mono.extra_skip_dirs)
     if not services:
@@ -133,6 +160,7 @@ def run_doctor(root: str, config_path: str | None = None) -> int:
     results.append(graph_result)
     results.append(_check_staleness(root))
     results.append(_check_api_key(root, cfg))
+    results.append(_check_mode(root, cfg))
     results.append(_check_services(root, cfg))
     results.append(_check_index_cache(root, cfg, graph_readable))
 

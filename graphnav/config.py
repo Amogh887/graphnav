@@ -17,6 +17,18 @@ BACKEND_KEY_VARS = {
 
 KNOWN_BACKENDS = frozenset(BACKEND_KEY_VARS)
 
+BACKEND_PROVIDER = {
+    "claude": "Anthropic",
+    "openai": "OpenAI",
+    "gemini": "Google",
+    "deepseek": "DeepSeek",
+    "ollama": "your local Ollama",
+}
+
+
+def backend_provider(backend: str) -> str:
+    return BACKEND_PROVIDER.get(backend, f"the '{backend}' provider")
+
 
 def backend_has_key(backend: str, env: dict[str, str]) -> bool:
     key_vars = BACKEND_KEY_VARS.get(backend, ())
@@ -66,6 +78,7 @@ class MonoConfig:
         "requirements.txt", "Gemfile", "composer.json", "tsconfig.json",
     ])
     graphify_backend: str = "claude"
+    semantic: bool = False
     watch_poll_interval: float = 3.0
     context_budget_tokens: int = 2000
     context_top_files: int = 8
@@ -145,6 +158,7 @@ def _apply_toml(cfg: Config, data: dict, warnings: list[str] | None = None) -> C
         cfg.mono = MonoConfig(
             marker_files=m.get("marker_files", cfg.mono.marker_files),
             graphify_backend=m.get("graphify_backend", cfg.mono.graphify_backend),
+            semantic=m.get("semantic", cfg.mono.semantic),
             watch_poll_interval=m.get("watch_poll_interval", cfg.mono.watch_poll_interval),
             context_budget_tokens=m.get("context_budget_tokens", cfg.mono.context_budget_tokens),
             context_top_files=m.get("context_top_files", cfg.mono.context_top_files),

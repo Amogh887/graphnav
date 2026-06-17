@@ -4,6 +4,22 @@ All notable changes to GraphNav are documented here. Versions follow [Semantic V
 
 ---
 
+## [2.0.0] — 2026-06-17
+
+### Changed (breaking)
+- **The Python module is now `graphnav` (was `codex_graph`).** The PyPI package and CLI were already `graphnav`; the import name now matches. CLI and MCP users are unaffected; anyone importing `codex_graph` directly must switch to `import graphnav`.
+- **`graphnav map` builds a local AST-only graph by default, even when an API key is present.** LLM-based semantic extraction is now strictly opt-in via `graphnav map --semantic` (or `[mono] semantic = true`). Previously a key in the environment silently triggered an LLM build that sent your source to the provider. This makes the default fully local, free, and offline, and keeps outward-facing actions explicit.
+
+### Added
+- **Trust & transparency for first-run.** A README "Is this safe?" section documenting the local-by-default, no-telemetry behavior and exactly how `.env` is used; PyPI metadata (long description, author, project URLs, classifiers) and signed provenance attestations on publish.
+- **`--offline` flag and `GRAPHNAV_OFFLINE=1`** to force the free local build even when a key is present.
+- **`graphnav doctor` now reports a `mode` line** — local (no network/LLM/cost) vs semantic (sends code to the provider) — and an explicit egress notice is printed before any semantic build sends source to an LLM.
+
+### Fixed
+- `graphnav doctor` no longer reports a not-yet-built graph as a hard `[fail]`; a fresh repo now reads as a `[warn]` ("not built yet — run `graphnav map`") so a clean setup isn't flagged as broken.
+
+---
+
 ## [1.4.1] — 2026-06-16
 
 ### Fixed

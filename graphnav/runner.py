@@ -6,9 +6,9 @@ import subprocess
 import sys
 import threading
 
-from codex_graph import CodexNotFoundError, CodexTimeoutError
-from codex_graph.config import Config
-from codex_graph.graph_query import RankedFile
+from graphnav import CodexNotFoundError, CodexTimeoutError
+from graphnav.config import Config
+from graphnav.graph_query import RankedFile
 
 
 def _read_file(path: str, max_chars: int) -> str:

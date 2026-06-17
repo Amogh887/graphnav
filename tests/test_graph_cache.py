@@ -6,8 +6,8 @@ import subprocess
 
 import pytest
 
-from codex_graph import GraphNotFoundError
-from codex_graph.graph_cache import (
+from graphnav import GraphNotFoundError
+from graphnav.graph_cache import (
     CACHE_VERSION,
     GraphBundle,
     _git_recency,
@@ -16,7 +16,7 @@ from codex_graph.graph_cache import (
     graph_stamp,
     load_bundle,
 )
-from codex_graph.graph_query import GraphIndex
+from graphnav.graph_query import GraphIndex
 from tests.conftest import write_graph
 
 
@@ -41,7 +41,7 @@ def fresh_memo():
 
 @pytest.fixture
 def no_git(monkeypatch):
-    monkeypatch.setattr("codex_graph.multirepo._git_sha", lambda root: None)
+    monkeypatch.setattr("graphnav.multirepo._git_sha", lambda root: None)
 
 
 @pytest.fixture
@@ -173,13 +173,13 @@ class TestGitRecency:
         assert _git_recency("/repo") == {}
 
     def test_recency_attached_to_bundle(self, graph_root, monkeypatch):
-        monkeypatch.setattr("codex_graph.multirepo._git_sha", lambda root: "a" * 40)
+        monkeypatch.setattr("graphnav.multirepo._git_sha", lambda root: "a" * 40)
         log = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\napi/views.py\n"
 
         def fake_run(*args, **kwargs):
             return subprocess.CompletedProcess(args, 0, stdout=log, stderr="")
 
-        monkeypatch.setattr("codex_graph.graph_cache.subprocess.run", fake_run)
+        monkeypatch.setattr("graphnav.graph_cache.subprocess.run", fake_run)
         bundle = load_bundle(graph_file(graph_root))
         assert bundle.recency == {"api/views.py": 1.0}
         assert bundle.recency_sha == "a" * 40

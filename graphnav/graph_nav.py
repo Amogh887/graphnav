@@ -5,7 +5,7 @@ import json
 import os
 from collections import defaultdict
 
-from codex_graph.graph_query import _tokenize
+from graphnav.graph_query import _tokenize
 
 STRUCTURAL_RELATIONS = frozenset({"contains"})
 

@@ -2,6 +2,23 @@
 
 **GraphNav** gives every AI coding agent (GitHub Copilot, Claude Code, OpenAI Codex) a minimal, targeted context pack instead of the whole repo. It is built on **[Graphify](https://pypi.org/project/graphifyy/)**: GraphNav extracts a Graphify knowledge graph of your codebase once, then serves each agent only the files and `file:line` locations relevant to the current task — so agents stop burning tokens on `find`/`ls`/`cat` exploration. What makes GraphNav unique is that it extracts a **single overarching Graphify graph** across the entire monorepo (not one graph per service), letting it surface call edges that cross service boundaries — something per-service extraction can never do.
 
+> **Works with no API key — no network, no cost, no data leaves your machine.** By default `graphnav` builds the graph locally from your code's AST. An LLM is used only if you explicitly opt in (see [Is this safe?](#is-this-safe)).
+
+---
+
+## Is this safe?
+
+Short answer: **yes — the default path is fully local, free, and non-destructive.**
+
+- **No network, no LLM, no cost by default.** `graphnav` and `graphnav map` build the knowledge graph on your machine from your code's AST (via the local `graphify` binary). Nothing is sent anywhere. This is the default whenever no API key is configured.
+- **No telemetry.** GraphNav makes no analytics or "phone-home" calls, ever.
+- **The only outward-facing actions are opt-in and announced.** (1) `graphnav map --semantic` (or setting `[mono] semantic = true`) uses an LLM backend for richer links — this sends your source to the provider you choose and may incur cost, and the tool prints a notice before it does. (2) `graphnav "<prompt>"` invokes the external `codex` CLI. Neither runs unless you ask for it.
+- **`.env` handling.** GraphNav reads `.env` files **only** to pass an LLM API key into the local `graphify` subprocess for the opt-in semantic build. Keys are never logged and nothing is sent anywhere except the LLM backend you explicitly choose. With no key, `.env` is irrelevant.
+- **What it writes:** a `graphify-out/` graph directory per project, and agent instruction files (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`). Nothing outside your repo.
+- **Provenance.** MIT-licensed; source at [github.com/Amogh887/leveraging-graphify](https://github.com/Amogh887/leveraging-graphify); published to PyPI via GitHub Actions Trusted Publishing (OIDC) with signed provenance attestations.
+
+> **Note on names:** the PyPI package is **`graphnav`** and it imports as `graphnav`. Its dependency is published on PyPI as **`graphifyy`** (double-y, because `graphify` was already taken) but installs the `graphify` binary and imports as `graphify`.
+
 ---
 
 ## Why GraphNav
@@ -45,7 +62,7 @@ Then open the repo in your AI coding tool and start working. **There is nothing 
 
 Requires Python ≥ 3.11. Pulls `graphifyy` (the `graphify` binary) automatically — including under `pipx`, `--user`, and virtualenv installs.
 
-**API key (optional):** With no key, `graphnav` builds a free AST-only graph — symbols, call edges, and cross-service bridges all work out of the box. Add a key only if you want richer semantic links: place a `.env` file anywhere up the directory tree from your project (or inside any service subfolder), and graphnav walks up and down to find it. Any backend's key works — Anthropic, OpenAI, Gemini, or DeepSeek:
+**API key (optional, opt-in):** By default `graphnav` builds a free AST-only graph — symbols, call edges, and cross-service bridges all work out of the box, fully local, even if a key is present. To get richer semantic links you explicitly opt in with `graphnav map --semantic` (or `[mono] semantic = true`), which sends your source to the LLM backend you choose. Provide the key via a `.env` file anywhere up the directory tree from your project (or inside any service subfolder), and graphnav walks up and down to find it. Any backend's key works — Anthropic, OpenAI, Gemini, or DeepSeek:
 
 ```
 OPENAI_API_KEY=sk-...
@@ -228,7 +245,7 @@ It checks the `graphify` binary, the config file (and reports any validation war
 
 ### `graphnav` (no subcommand)
 
-Run with no arguments from any project root, it auto-detects the project shape (single folder or monorepo) and runs the full setup automatically. If a prompt is given, it falls through to the context-injection path for the Codex CLI.
+Run with no arguments from any project root, it auto-detects the project shape (single folder or monorepo) and runs the full setup automatically. If a prompt is given, it falls through to the graph-context path for the Codex CLI (this path invokes the external `codex` CLI — see [Is this safe?](#is-this-safe)).
 
 ---
 

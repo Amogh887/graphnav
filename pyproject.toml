@@ -4,21 +4,41 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graphnav"
-version = "1.4.1"
-description = "Knowledge-graph context injection for AI coding agents in monorepos"
+version = "2.0.0"
+description = "Knowledge-graph context for AI coding agents in monorepos — local and free by default"
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+authors = [{ name = "Amogh Rao" }]
+keywords = ["knowledge-graph", "ai", "coding-agent", "monorepo", "mcp", "context", "codebase", "graphify"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Code Generators",
+]
 dependencies = ["graphifyy>=0.8", "mcp>=1.2"]
 
+[project.urls]
+Homepage = "https://github.com/Amogh887/leveraging-graphify"
+Source = "https://github.com/Amogh887/leveraging-graphify"
+Changelog = "https://github.com/Amogh887/leveraging-graphify/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Amogh887/leveraging-graphify/issues"
+
 [project.scripts]
-graphnav = "codex_graph.cli:entry"
+graphnav = "graphnav.cli:entry"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "anthropic>=0.40"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["codex_graph*"]
+include = ["graphnav*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

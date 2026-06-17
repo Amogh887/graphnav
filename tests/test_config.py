@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from codex_graph.config import (
+from graphnav.config import (
     CodexConfig,
     Config,
     ContextConfig,
@@ -46,6 +46,9 @@ class TestMonoConfigDefaults:
 
     def test_default_backend(self):
         assert MonoConfig().graphify_backend == "claude"
+
+    def test_semantic_defaults_false(self):
+        assert MonoConfig().semantic is False
 
     def test_default_poll_interval(self):
         assert MonoConfig().watch_poll_interval == 3.0
@@ -196,6 +199,12 @@ class TestLoadConfig:
         config_file.write_text('[mono]\nmarker_files = ["Makefile"]\n')
         cfg = load_config(str(config_file))
         assert cfg.mono.marker_files == ["Makefile"]
+
+    def test_semantic_from_toml(self, tmp_path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("[mono]\nsemantic = true\n")
+        cfg = load_config(str(config_file))
+        assert cfg.mono.semantic is True
 
 
 class TestConfigValidation:

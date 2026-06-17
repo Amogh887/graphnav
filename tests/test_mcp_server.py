@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from codex_graph.mcp_server import GraphTools, _safe_path
+from graphnav.mcp_server import GraphTools, _safe_path
 from tests.conftest import write_graph
 
 

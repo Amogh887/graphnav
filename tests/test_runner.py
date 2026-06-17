@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from codex_graph.config import Config, ContextConfig
-from codex_graph.graph_query import RankedFile
-from codex_graph.runner import _read_file, build_prompt
+from graphnav.config import Config, ContextConfig
+from graphnav.graph_query import RankedFile
+from graphnav.runner import _read_file, build_prompt
 
 
 class TestReadFile:

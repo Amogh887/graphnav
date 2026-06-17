@@ -11,11 +11,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from codex_graph.config import (
+from graphnav.config import (
     BACKEND_KEY_VARS,
     MonoConfig,
     QueryConfig,
     backend_has_key,
+    backend_provider,
 )
 
 
@@ -300,16 +301,29 @@ def run_extract(
     backend: str,
     timeout: int = 600,
     env: dict[str, str] | None = None,
+    semantic: bool = False,
 ) -> int:
     resolved_env = env if env is not None else dict(os.environ)
-    if backend_has_key(backend, resolved_env):
-        cmd = [graphify_path, "extract", service.abs_path, "--backend", backend, "--out", service.abs_path]
-    else:
+    if semantic and backend_has_key(backend, resolved_env):
         print(
-            f"[graphnav] no API key for backend '{backend}' — building a free AST-only graph "
-            f"(set a {backend} API key for richer semantic links).",
+            f"[graphnav] semantic extraction via '{backend}' — your source is sent to "
+            f"{backend_provider(backend)}'s API and may incur cost.",
             file=sys.stderr,
         )
+        cmd = [graphify_path, "extract", service.abs_path, "--backend", backend, "--out", service.abs_path]
+    else:
+        if semantic and not backend_has_key(backend, resolved_env):
+            print(
+                f"[graphnav] --semantic requested but no API key for '{backend}' found — "
+                f"building a free local AST-only graph instead.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "[graphnav] building a free local AST-only graph (no network, no LLM, no cost). "
+                "Use `graphnav map --semantic` for richer LLM-derived links.",
+                file=sys.stderr,
+            )
         try:
             os.remove(service.graph_path)
         except OSError:
@@ -391,7 +405,7 @@ def maybe_auto_rebuild(root: str, enabled: bool = True) -> bool:
     try:
         with open(log_path, "ab") as log:
             proc = subprocess.Popen(
-                [sys.executable, "-m", "codex_graph.cli", "map", "--root", root],
+                [sys.executable, "-m", "graphnav.cli", "map", "--root", root],
                 stdout=log, stderr=log, start_new_session=True,
                 env=_build_subprocess_env(root),
             )
@@ -480,8 +494,12 @@ def build_overarching_graph(
     backend: str,
     timeout: int = 1200,
     env: dict[str, str] | None = None,
+    semantic: bool = False,
 ) -> int:
-    return run_extract(_overarching_service(root), graphify_path, backend, timeout=timeout, env=env)
+    return run_extract(
+        _overarching_service(root), graphify_path, backend,
+        timeout=timeout, env=env, semantic=semantic,
+    )
 
 
 def _graph_links(graph: dict) -> list[dict]:
@@ -756,8 +774,8 @@ def build_context_pack(
     query_cfg: QueryConfig | None = None,
     mono_cfg: MonoConfig | None = None,
 ) -> str:
-    from codex_graph.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
-    from codex_graph.graph_query import query_files
+    from graphnav.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
+    from graphnav.graph_query import query_files
 
     root = os.path.abspath(root)
     if mono_cfg is None:
@@ -893,8 +911,8 @@ def build_context_pack_inline(
     root, task, top_files=3, budget_tokens=2500, skip_patterns=None, query_cfg=None,
     auto_rebuild=True,
 ):
-    from codex_graph.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
-    from codex_graph.graph_query import query_files
+    from graphnav.graph_cache import DEFAULT_PACK_SKIP_PATTERNS, load_bundle
+    from graphnav.graph_query import query_files
 
     root = os.path.abspath(root)
     rebuild_started = maybe_auto_rebuild(root, enabled=auto_rebuild)
@@ -1019,6 +1037,8 @@ def run_map(
     mono_cfg: MonoConfig,
     backend_override: str | None = None,
     dry_run: bool = False,
+    semantic: bool = False,
+    offline: bool = False,
 ) -> int:
     root = os.path.abspath(root)
     graphify_path = find_graphify()
@@ -1031,23 +1051,27 @@ def run_map(
         print(f"No source code found in {root}. Run graphnav from a directory that contains code.", file=sys.stderr)
         return 1
 
+    offline = offline or os.environ.get("GRAPHNAV_OFFLINE") == "1"
+    use_semantic = (semantic or mono_cfg.semantic) and not offline
     shape = "whole repo (single project)" if single else f"{len(services)} service(s): {', '.join(s.name for s in services)}"
     if dry_run:
         print(f"Detected {shape}:")
         for svc in services:
             print(f"  {svc.name}  {svc.abs_path}")
-        print("[dry-run] No graphify calls made.")
+        mode = "semantic (LLM)" if use_semantic else "local AST-only (no network, no cost)"
+        print(f"[dry-run] Build mode: {mode}. No graphify calls made.")
         return 0
 
     backend = backend_override or mono_cfg.graphify_backend
     env = _build_subprocess_env(root)
     overarching_path = _overarching_graph_path(root)
+    used_llm = use_semantic and backend_has_key(backend, env)
 
     print(f"[graphnav] Building knowledge graph for {shape} ...", file=sys.stderr)
-    rc = build_overarching_graph(root, graphify_path, backend, env=env)
+    rc = build_overarching_graph(root, graphify_path, backend, env=env, semantic=use_semantic)
     if rc != 0 or not os.path.exists(overarching_path):
         print(f"Error: graphify extraction failed (exit {rc}).", file=sys.stderr)
-        if backend_has_key(backend, env):
+        if used_llm:
             key_hint = " or ".join(BACKEND_KEY_VARS.get(backend, ())) or "the backend's API key"
             print(f"  Check your '{backend}' backend ({key_hint}) or re-run; graphify may be misconfigured.", file=sys.stderr)
         else:
@@ -1082,6 +1106,8 @@ def run_watch(
     root: str,
     mono_cfg: MonoConfig,
     backend_override: str | None = None,
+    semantic: bool = False,
+    offline: bool = False,
 ) -> int:
     root = os.path.abspath(root)
     graphify_path = find_graphify()
@@ -1095,12 +1121,14 @@ def run_watch(
         return 1
 
     backend = backend_override or mono_cfg.graphify_backend
+    offline = offline or os.environ.get("GRAPHNAV_OFFLINE") == "1"
+    use_semantic = (semantic or mono_cfg.semantic) and not offline
     env = _build_subprocess_env(root)
     overarching_path = _overarching_graph_path(root)
 
     if not os.path.exists(overarching_path):
         print(f"[graphnav] Bootstrapping knowledge graph ...", file=sys.stderr)
-        rc = build_overarching_graph(root, graphify_path, backend, env=env)
+        rc = build_overarching_graph(root, graphify_path, backend, env=env, semantic=use_semantic)
         if rc != 0 or not os.path.exists(overarching_path):
             print(f"Error: bootstrap extraction failed (exit {rc}).", file=sys.stderr)
             return 1

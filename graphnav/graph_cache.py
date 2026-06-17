@@ -7,9 +7,9 @@ import re
 import subprocess
 from dataclasses import dataclass
 
-from codex_graph import GraphNotFoundError
-from codex_graph.graph_nav import GraphNav
-from codex_graph.graph_query import GraphIndex, merge_relation_weights
+from graphnav import GraphNotFoundError
+from graphnav.graph_nav import GraphNav
+from graphnav.graph_query import GraphIndex, merge_relation_weights
 
 CACHE_VERSION = 1
 RECENCY_COMMITS = 50
@@ -129,7 +129,7 @@ def _git_recency(repo_root: str) -> dict[str, float]:
 
 
 def _refresh_recency(bundle: GraphBundle, repo_root: str) -> bool:
-    from codex_graph.multirepo import _git_sha
+    from graphnav.multirepo import _git_sha
 
     sha = _git_sha(repo_root)
     if sha == bundle.recency_sha:
@@ -147,7 +147,7 @@ def _build_bundle(
     skip_key: tuple[str, ...],
     relation_key: tuple[tuple[str, float], ...],
 ) -> GraphBundle:
-    from codex_graph.multirepo import _symbols_by_file
+    from graphnav.multirepo import _symbols_by_file
 
     with open(graph_path, encoding="utf-8") as f:
         graph = json.load(f)

@@ -7,7 +7,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 
-from codex_graph import GraphNotFoundError
+from graphnav import GraphNotFoundError
 
 
 @dataclass

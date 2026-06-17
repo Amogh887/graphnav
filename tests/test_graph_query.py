@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from codex_graph import GraphNotFoundError
-from codex_graph.graph_query import (
+from graphnav import GraphNotFoundError
+from graphnav.graph_query import (
     DEFAULT_RELATION_WEIGHTS,
     GraphIndex,
     UNKNOWN_RELATION_WEIGHT,
