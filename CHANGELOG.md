@@ -4,6 +4,17 @@ All notable changes to GraphNav are documented here. Versions follow [Semantic V
 
 ---
 
+## [2.0.1] — 2026-06-18
+
+### Fixed
+- **A malformed but valid-JSON `graph.json` no longer crashes with a traceback.** Graph reads across `graphnav context`, `find`/`neighbors`/`impact`, and the MCP server guarded only `(JSONDecodeError, KeyError, OSError)`, so a graph that parsed as JSON but had the wrong shape (a top-level list, `nodes: null`, `nodes` as a table, or a node that isn't an object) escaped as an uncaught `AttributeError`/`TypeError`. The graph index and navigator now tolerate these shapes, and a clearly-corrupt graph degrades to the existing "could not be read — run `graphnav map`" message instead of crashing.
+- **A graph node missing an `id` no longer crashes `graphnav map` or `graphnav context`.** `analyze_bridges` indexed nodes with `node["id"]` while the rest of the code used `node.get("id")`; a single id-less node raised an uncaught `KeyError` in the bridge analysis that `partition_graph` already tolerated. Both paths now skip id-less and non-object nodes consistently.
+- **`graphnav neighbors`/`impact` no longer report a Markdown or other non-code node as a symbol's definition.** The fuzzy fallback iterated every node, so a documentation node could be returned as a symbol's `defined_at` with a bogus blast radius. The fallback now matches only code nodes, matching `find`'s behavior.
+- **Singular identifiers ending in `-us`/`-is` are no longer over-stemmed.** Tokens like `status`, `analysis`, `focus`, and `virus` were truncated to `statu`/`analysi`/`focu`/`viru`, so a search for `status` missed code naming `statuses`. These endings are now preserved.
+- **`context.max_file_chars` is now clamped to a non-negative value**, the one numeric config field that previously accepted a negative value silently and produced nonsensical file truncation.
+
+---
+
 ## [2.0.0] — 2026-06-17
 
 ### Changed (breaking)

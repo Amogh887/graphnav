@@ -515,11 +515,15 @@ def partition_graph(
 ) -> dict[str, int]:
     with open(overarching_graph_path, encoding="utf-8") as f:
         graph = json.load(f)
+    if not isinstance(graph, dict):
+        graph = {}
 
     service_names = {s.name for s in services}
     node_svc: dict[str, str] = {}
     per_nodes: dict[str, list[dict]] = {s.name: [] for s in services}
     for node in graph.get("nodes", []):
+        if not isinstance(node, dict):
+            continue
         svc = _service_of(node.get("source_file", ""), service_names)
         if svc is not None:
             node_svc[node.get("id")] = svc
@@ -558,9 +562,14 @@ def analyze_bridges(
 ) -> dict[str, list[BridgeRow]]:
     with open(overarching_graph_path, encoding="utf-8") as f:
         graph = json.load(f)
+    if not isinstance(graph, dict):
+        graph = {}
 
     service_names = {s.name for s in services}
-    node_by_id: dict[str, dict] = {n["id"]: n for n in graph.get("nodes", [])}
+    node_by_id: dict[str, dict] = {}
+    for n in graph.get("nodes", []):
+        if isinstance(n, dict) and n.get("id") is not None:
+            node_by_id[n["id"]] = n
     bridges: dict[str, list[BridgeRow]] = {s.name: [] for s in services}
 
     for link in _graph_links(graph):
@@ -628,8 +637,9 @@ def write_bridges_md(service: ServiceInfo, rows: list[BridgeRow]) -> str:
 
 def _symbols_by_file(graph: dict, prefix_strip: str = "") -> dict[str, list[tuple[str, str]]]:
     out: dict[str, list[tuple[str, str]]] = {}
-    for node in graph.get("nodes", []):
-        if node.get("file_type") != "code":
+    raw_nodes = graph.get("nodes") if isinstance(graph, dict) else None
+    for node in raw_nodes if isinstance(raw_nodes, list) else []:
+        if not isinstance(node, dict) or node.get("file_type") != "code":
             continue
         sf = node.get("source_file", "")
         label = node.get("label", "")
@@ -815,7 +825,7 @@ def build_context_pack(
             recency_boost_weight=query_cfg.recency_boost_weight,
         )
         by_file = bundle.symbols_by_file
-    except (json.JSONDecodeError, KeyError, OSError) as exc:
+    except (json.JSONDecodeError, KeyError, OSError, ValueError, TypeError, AttributeError) as exc:
         _warn(
             f"graph.json could not be read ({type(exc).__name__}: {exc}) — "
             "run `graphnav map` to rebuild"
@@ -945,7 +955,7 @@ def build_context_pack_inline(
             recency_boost_weight=query_cfg.recency_boost_weight,
         )
         by_file = bundle.symbols_by_file
-    except (json.JSONDecodeError, KeyError, OSError) as exc:
+    except (json.JSONDecodeError, KeyError, OSError, ValueError, TypeError, AttributeError) as exc:
         _warn(
             f"graph.json could not be read ({type(exc).__name__}: {exc}) — "
             "run `graphnav map` to rebuild"

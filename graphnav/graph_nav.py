@@ -15,11 +15,16 @@ class GraphNav:
         if graph is None:
             with open(graph_path, encoding="utf-8") as f:
                 graph = json.load(f)
+        if not isinstance(graph, dict):
+            graph = {}
         self.skip = skip_patterns or []
         self._label_index = None
         self.id2node: dict = {}
         self.file2ids: dict[str, list] = defaultdict(list)
-        for n in graph.get("nodes", []):
+        raw_nodes = graph.get("nodes")
+        for n in raw_nodes if isinstance(raw_nodes, list) else []:
+            if not isinstance(n, dict):
+                continue
             nid = n.get("id")
             if nid is None:
                 continue
@@ -32,7 +37,9 @@ class GraphNav:
         links = graph.get("links")
         if links is None:
             links = graph.get("edges", [])
-        for e in links or []:
+        for e in links if isinstance(links, list) else []:
+            if not isinstance(e, dict):
+                continue
             s, t = e.get("source"), e.get("target")
             if s is None or t is None:
                 continue
@@ -116,6 +123,8 @@ class GraphNav:
             q = set(_tokenize(symbol))
             best, best_score = None, (0, 0.0)
             for nid, n in self.id2node.items():
+                if n.get("file_type") != "code" or self._skipped(n.get("source_file", "")):
+                    continue
                 toks = set(_tokenize(n.get("label", "")))
                 ov = len(q & toks)
                 score = (ov, ov / (len(toks) or 1))

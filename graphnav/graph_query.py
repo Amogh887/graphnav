@@ -64,6 +64,8 @@ def _stem(t: str) -> str:
         return t[:-3] + "y"
     if t.endswith("es"):
         return t[:-2]
+    if t.endswith("us") or t.endswith("is"):
+        return t
     if t.endswith("s"):
         return t[:-1]
     return t
@@ -94,8 +96,11 @@ class GraphIndex:
         if graph is None:
             with open(graph_path, encoding="utf-8") as f:
                 graph = json.load(f)
+        if not isinstance(graph, dict):
+            graph = {}
 
-        nodes = graph.get("nodes", [])
+        raw_nodes = graph.get("nodes")
+        nodes = [n for n in raw_nodes if isinstance(n, dict)] if isinstance(raw_nodes, list) else []
         weights = merge_relation_weights(relation_weights)
 
         self.file_tokens: dict[str, list[str]] = defaultdict(list)
@@ -117,7 +122,11 @@ class GraphIndex:
         links = graph.get("links")
         if links is None:
             links = graph.get("edges", [])
-        for e in links or []:
+        if not isinstance(links, list):
+            links = []
+        for e in links:
+            if not isinstance(e, dict):
+                continue
             s = id2file.get(e.get("source"))
             t = id2file.get(e.get("target"))
             if s and t and s != t:

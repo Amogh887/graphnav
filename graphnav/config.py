@@ -259,6 +259,9 @@ def _validate(cfg: Config) -> list[str]:
     if cfg.codex.timeout_seconds < 1:
         warnings.append(f"codex.timeout_seconds {cfg.codex.timeout_seconds} clamped to 1")
         cfg.codex.timeout_seconds = 1
+    if cfg.context.max_file_chars < 0:
+        warnings.append(f"context.max_file_chars {cfg.context.max_file_chars} clamped to 0")
+        cfg.context.max_file_chars = 0
     return warnings
 
 

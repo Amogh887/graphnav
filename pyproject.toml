@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graphnav"
-version = "2.0.0"
+version = "2.0.1"
 description = "Knowledge-graph context for AI coding agents in monorepos — local and free by default"
 readme = "README.md"
 license = "MIT"

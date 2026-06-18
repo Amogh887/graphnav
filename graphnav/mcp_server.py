@@ -53,7 +53,7 @@ class GraphTools:
                 relation_weights=self.query_cfg.edge_relation_weights,
                 repo_root=self.root,
             ).nav
-        except (GraphNotFoundError, OSError, json.JSONDecodeError, KeyError):
+        except (GraphNotFoundError, OSError, json.JSONDecodeError, KeyError, ValueError, TypeError, AttributeError):
             return None
 
     def graph_context(self, task: str) -> str:

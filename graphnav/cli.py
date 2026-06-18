@@ -156,7 +156,7 @@ def _run_graph_query_command(kind: str, argv: list[str]) -> None:
             graph_path, cfg.graph.skip_patterns,
             relation_weights=cfg.query.edge_relation_weights, repo_root=root,
         ).nav
-    except (_json.JSONDecodeError, KeyError, OSError) as exc:
+    except (_json.JSONDecodeError, KeyError, OSError, ValueError, TypeError, AttributeError) as exc:
         print(f"Error: could not read {graph_path} ({type(exc).__name__}: {exc}).", file=sys.stderr)
         print("Run `graphnav map` to rebuild the graph.", file=sys.stderr)
         sys.exit(2)

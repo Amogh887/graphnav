@@ -151,6 +151,8 @@ def _build_bundle(
 
     with open(graph_path, encoding="utf-8") as f:
         graph = json.load(f)
+    if not isinstance(graph, dict):
+        raise ValueError(f"graph.json is not a JSON object (got {type(graph).__name__})")
     return GraphBundle(
         stamp=stamp,
         skip_key=skip_key,
