@@ -18,6 +18,7 @@ RECENCY_DECAY = 0.9
 DEFAULT_PACK_SKIP_PATTERNS = [
     "node_modules", ".git", "graphify-out", "dist", "build",
     "playwright-report", "test-results", ".next", "coverage",
+    "CLAUDE.md", "AGENTS.md", "copilot-instructions.md",
 ]
 
 _SHA_LINE = re.compile(r"^[0-9a-f]{40}$")

@@ -860,6 +860,7 @@ def build_context_pack(
         else:
             out_lines.append(f"- {sf}")
 
+    has_cross_service_impact = False
     services = detect_services(root, mono_cfg.marker_files, mono_cfg.extra_skip_dirs)
     if services:
         bridges = analyze_bridges(overarching_path, services)
@@ -874,16 +875,19 @@ def build_context_pack(
                         f"--{r.relation}--> {r.remote_file}:{r.remote_symbol} {r.remote_loc}"
                     )
         if impact:
+            has_cross_service_impact = True
             out_lines.append("")
             out_lines.append("## Cross-service impact")
             out_lines.extend(impact)
 
-    out_lines += [
-        "",
-        "## Next",
-        "Read only the `file:line` regions above. Before changing a symbol under "
-        'Cross-service impact, run `graphify affected "<symbol>"`. Then run the tests.',
-    ]
+    if has_cross_service_impact:
+        next_line = (
+            "Read only the `file:line` regions above. Before changing a symbol under "
+            'Cross-service impact, run `graphify affected "<symbol>"`. Then run the tests.'
+        )
+    else:
+        next_line = "Read only the `file:line` regions above. Then run the tests."
+    out_lines += ["", "## Next", next_line]
 
     text = "\n".join(out_lines) + "\n"
     char_budget = max(budget_tokens, 0) * 4

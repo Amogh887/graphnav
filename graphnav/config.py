@@ -41,7 +41,7 @@ def backend_has_key(backend: str, env: dict[str, str]) -> bool:
 class GraphConfig:
     path: str = "graphify-out/graph.json"
     project_root: str = "."
-    skip_patterns: list[str] = field(default_factory=lambda: ["playwright-report", "node_modules", ".git"])
+    skip_patterns: list[str] = field(default_factory=lambda: ["playwright-report", "node_modules", ".git", "CLAUDE.md", "AGENTS.md", "copilot-instructions.md"])
 
 
 @dataclass

@@ -9,6 +9,16 @@ from graphnav.graph_query import _tokenize
 
 STRUCTURAL_RELATIONS = frozenset({"contains"})
 
+NON_SYMBOL_MANIFESTS = frozenset({
+    "package.json", "package-lock.json", "tsconfig.json", "pyproject.toml",
+    "requirements.txt", "go.mod", "go.sum", "Cargo.toml", "Cargo.lock",
+    "Gemfile", "Gemfile.lock", "composer.json",
+})
+
+
+def _is_manifest(source_file: str) -> bool:
+    return os.path.basename(source_file) in NON_SYMBOL_MANIFESTS
+
 
 class GraphNav:
     def __init__(self, graph_path: str, skip_patterns: list[str] | None = None, graph: dict | None = None):
@@ -60,7 +70,7 @@ class GraphNav:
         if getattr(self, "_label_index", None) is None:
             index: dict[str, list] = defaultdict(list)
             for nid, n in self.id2node.items():
-                if n.get("file_type") != "code":
+                if n.get("file_type") != "code" or _is_manifest(n.get("source_file", "")):
                     continue
                 label = n.get("label", "")
                 if not label or self._skipped(n.get("source_file", "")):
@@ -89,7 +99,7 @@ class GraphNav:
             return []
         scored = []
         for n in self.id2node.values():
-            if n.get("file_type") != "code":
+            if n.get("file_type") != "code" or _is_manifest(n.get("source_file", "")):
                 continue
             sf = n.get("source_file", "")
             label = n.get("label", "")
@@ -123,7 +133,7 @@ class GraphNav:
             q = set(_tokenize(symbol))
             best, best_score = None, (0, 0.0)
             for nid, n in self.id2node.items():
-                if n.get("file_type") != "code" or self._skipped(n.get("source_file", "")):
+                if n.get("file_type") != "code" or _is_manifest(n.get("source_file", "")) or self._skipped(n.get("source_file", "")):
                     continue
                 toks = set(_tokenize(n.get("label", "")))
                 ov = len(q & toks)

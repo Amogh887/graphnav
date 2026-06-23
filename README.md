@@ -142,7 +142,7 @@ If the graph was built on an older commit than the current `HEAD`, the pack is p
 | `--files` | `8` | Max number of files to include |
 | `--root` | `.` | Repo root |
 
-Example output:
+Example output (with `--locations-only`, which prints a `file:line` index instead of inline code):
 
 ```
 # Context for: add a critique scoring function to the coach
@@ -190,7 +190,7 @@ Exposes five tools:
 | `graph_context(task)` | Minimal context pack with relevant code inline — the first-resort tool |
 | `graph_find(query)` | Find symbols by query → `file:line` |
 | `graph_neighbors(symbol)` | A symbol's callers and callees |
-| `read_region(path, start, end)` | Read a line range instead of a whole file |
+| `read_region(path, start_line, end_line)` | Read a line range instead of a whole file |
 | `impact(symbol)` | Blast radius: who breaks if you change this symbol |
 
 Register it with any MCP client. For Claude Code:

@@ -4,6 +4,13 @@ All notable changes to GraphNav are documented here. Versions follow [Semantic V
 
 ---
 
+## [2.0.2] — 2026-06-23
+
+### Fixed
+- **`graphnav context`/`find`/`neighbors`/`impact` no longer surface GraphNav's own generated playbook files as relevant code.** Re-running `graphnav map` re-extracts the whole repo, which re-ingests the `CLAUDE.md`/`AGENTS.md`/`.github/copilot-instructions.md` it had just written as ordinary `document` nodes — and those nodes were weighted *above* real code in context ranking, so the playbook could outrank the file you actually needed. These three generated files are now excluded from the graph the same way other generated artifacts already are.
+- **Manifest/config files (`package.json`, `tsconfig.json`, `pyproject.toml`, etc.) no longer surface as symbol-search or fuzzy-fallback results.** The underlying `graphify` extractor tags manifest keys (e.g. a `package.json`'s `name`/`version`/`scripts`) as `file_type: "code"`, so an unrelated or mistyped query could fall through to the character-similarity fallback and return a manifest key as if it were a code symbol. `find`/`neighbors`/`impact` now exclude manifest-derived nodes the same way non-code `document` nodes already were excluded in 2.0.1.
+- **`graphnav context --locations-only` no longer tells you to check "Cross-service impact" when no such section was shown.** The closing `## Next` block referenced a "Cross-service impact" section unconditionally, even on single-folder projects or monorepo runs with no relevant cross-service edges, where that section is omitted. The reminder now only appears when the section was actually printed.
+
 ## [2.0.1] — 2026-06-18
 
 ### Fixed
